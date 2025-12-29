@@ -1,0 +1,18 @@
+# Security: NEVER commit these
+*.pem
+.env
+secrets/
+
+# Docker / Build artifacts
+__pycache__/
+*.pyc
+node_modules/
+dist/
+
+# Large files / Models
+models/
+*.wav
+*.mp3
+
+# System
+.DS_Store

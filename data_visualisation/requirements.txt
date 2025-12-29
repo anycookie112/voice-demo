@@ -1,0 +1,4 @@
+pandas
+matplotlib
+langchain==1.0.3
+langchain-ollama
