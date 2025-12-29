@@ -3,7 +3,7 @@ import contextlib
 from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
-
+import os
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
@@ -136,8 +136,8 @@ async def _stt_stream(
     #     )
     stt = LocalWhisperSTT(
         model_size="large-v3-turbo", # or "distil-large-v3" for 3x speed
-        device="cpu",         # FORCE CUDA
-        compute_type="int8" # FORCE FLOAT16
+        device="cuda",         # FORCE CUDA
+        compute_type="float16" # FORCE FLOAT16
     )
 
     async def send_audio():
@@ -445,12 +445,12 @@ app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", port=8112, reload=True)
-    # uvicorn.run(
-    #     app, 
-    #     host="0.0.0.0", 
-    #     port=8000,
-    #     # Point to where they were copied in the container
-    #     ssl_keyfile="/app/key.pem", 
-    #     ssl_certfile="/app/cert.pem"
-    # )
+    # uvicorn.run("main:app", port=8015, reload=True)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=8000,
+        # Point to where they were copied in the container
+        ssl_keyfile="/app/key.pem", 
+        ssl_certfile="/app/cert.pem"
+    )
