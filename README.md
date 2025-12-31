@@ -1,76 +1,56 @@
-Voice Demo (Voice Sandwich)
+# 🎙️ Voice Demo (Voice-Sandwich + VibeVoice)
 
-This repository demonstrates a GPU-accelerated voice AI application that integrates real-time speech processing, LLM inference, and a web frontend. The system is containerized using Docker and supports secure HTTPS communication via self-signed SSL certificates.
+This repository provides a **GPU-accelerated, containerized voice demo system** built on:
 
-Features
+- **Voice-Sandwich** (web + Python backend)
+- **VibeVoice** (text-to-speech / voice generation)
+- Optional **LLM routing via Groq**
+- HTTPS support using self-signed certificates
 
-🎙️ Real-time voice processing pipeline
+The project is designed to run **locally on a single machine** using Docker and NVIDIA GPUs.
 
-🤖 LLM integration (Groq supported)
+---
 
-🌐 Web frontend built with PNPM
+## 🚀 Features
 
-🐳 Fully containerized (Docker)
+- End-to-end voice demo pipeline
+- NVIDIA GPU acceleration (CUDA)
+- Modular architecture (Web / Python / Models)
+- HTTPS-enabled backend
+- Hot-reload friendly for development
 
-🔒 HTTPS support with self-signed certificates
+---
 
-⚡ GPU acceleration (CUDA-enabled Docker)
+## 📦 Requirements
 
-Prerequisites
+### System
+- Linux (recommended) or WSL2
+- NVIDIA GPU
+- NVIDIA Driver + CUDA compatible with Docker
 
-Make sure you have the following installed:
 
-Docker (with NVIDIA Container Toolkit)
-
-NVIDIA GPU with compatible drivers
-
-Node.js (for frontend build)
-
-pnpm
-
-OpenSSL
-
-Repository Setup
-
-Clone the repository:
-
+## Clone the Repository
 git clone https://github.com/anycookie112/voice-demo.git
 cd voice-demo
 
-Build the Docker Image
-docker build -t voice-demo .
-
-Generate SSL Certificates
-
-Create a self-signed certificate (replace CN with your server IP):
-
+## Generate HTTPS Certificates
 openssl req -x509 -newkey rsa:4096 -nodes \
   -out cert.pem \
   -keyout key.pem \
   -days 365 \
-  -subj "/C=US/ST=State/L=City/O=Organization/OU=Unit/CN=YOUR_SERVER_IP"
+  -subj "/C=US/ST=State/L=City/O=Organization/OU=Unit/CN=<IP_ADDRESS>"
 
+## Build Docker Image
+docker build -t voice-demo .
 
-Example:
-
-CN=172.20.8.110
-
-Build the Web Frontend
-
-Navigate to the web component:
-
+## Build Web Frontend
 cd voice-sandwich-demo/components/web
-
-
-Install dependencies and build:
-
 pnpm install --no-strict-peer-dependencies
 pnpm build
 
-Run the Application (Docker)
 
-From the root of the repository, run:
 
+## Run the Container
 docker run --gpus all -it \
   -p 8000:8000 \
   -w /app/voice-sandwich-demo/components/python \
@@ -82,3 +62,5 @@ docker run --gpus all -it \
   -v $(pwd)/voice-sandwich-demo/components/python/src:/app/voice-sandwich-demo/components/python/src \
   -v /home/robust/voice_demo_docket/voice-demo/VibeVoice/demo/voices:/app/voice-demo/VibeVoice/demo/voices \
   voice-demo
+
+
