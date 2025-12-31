@@ -51,13 +51,14 @@ RUN pip3 install --break-system-packages accelerate
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
 RUN pip3 install --break-system-packages spacy
-
+RUN apt-get update && apt-get install -y libsndfile1
 # 2. CRITICAL FIX: Pre-download the Spacy model for Kokoro/Misaki
 #    We use --break-system-packages here so the build succeeds.
 #    Kokoro usually requires 'en_core_web_md'.
 RUN python3 -m spacy download en_core_web_md --break-system-packages
 RUN python3 -m spacy download en_core_web_sm --break-system-packages
-
+RUN pip3 install --break-system-packages misaki[zh]
+RUN pip3 install --break-system-packages https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.6.4/flash_attn-2.8.3+cu130torch2.9-cp312-cp312-linux_aarch64.whl
 # 8. Application Setup
 #    Change Workdir to match your project structure
 WORKDIR /app
@@ -67,11 +68,15 @@ COPY voice-sandwich-demo/components/python/requirements.txt .
 RUN grep -v "ctranslate2" requirements.txt > req_safe.txt && \
     pip3 install --break-system-packages -r req_safe.txt
 
-#    B. Copy Source Code (REQUIRED so the container has the code)
+# 1. Copy everything (creates /app/voice-demo/voice-sandwich-demo)
 COPY . .
-ENV PYTHONPATH="/app/voice-sandwich-demo/components/python/src:/app/VibeVoice:/app"
 
-WORKDIR /app/voice-sandwich-demo/components/python
+# 2. Update PYTHONPATH to include the extra 'voice-demo' folder
+ENV PYTHONPATH="/app/voice-demo/voice-sandwich-demo/components/python/src:/app/VibeVoice:/app"
+
+# 3. Update WORKDIR to include the extra 'voice-demo' folder
+WORKDIR /app/voice-demo/voice-sandwich-demo/components/python
+
 CMD ["python3", "src/main.py"]
 
 

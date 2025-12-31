@@ -79,7 +79,7 @@ class KokoroTTS:
 
     def __init__(
         self,
-        lang_code: str = "a",          # 'a' = American English, 'b' = British, etc.
+        lang_code: str = "z",          # 'a' = American English, 'b' = British, etc.
         voice: str = "af_heart",       # see Kokoro VOICES.md
         sample_rate: int = 24000,
         chunk_ms: int = 50,            # how big each streamed audio chunk is

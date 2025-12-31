@@ -27,6 +27,9 @@ tqdm
 langchain
 dotenv
 matplotlib
+langdetect
+librosa
+
 
 # Voice / AI (Ensure these are here)
 faster-whisper
@@ -38,6 +41,7 @@ langchain_groq
 diffusers
 accelerate
 transformers==4.51.3
+torchaudio
 
 # EXPLICITLY REMOVED: ctranslate2 
 # (Reason: We built it manually in the Dockerfile for GB10 support)

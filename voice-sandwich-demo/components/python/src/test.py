@@ -1,149 +1,132 @@
-# # # test_kokoro_wav.py
-# # import asyncio
-# # from kokoro_tts import KokoroTTS  # adjust import path
-
-# # async def main():
-# #     tts = KokoroTTS(
-# #         lang_code="a",
-# #         voice="af_heart",
-# #         sample_rate=16000,
-# #         chunk_ms=50,
-# #     )
-
-# #     await tts.synthesize_to_wav(
-# #         "Hello, this is Kokoro speaking from your local TTS adapter.",
-# #         "kokoro_test.wav",
-# #     )
-
-# # asyncio.run(main())
-# #    python -m ensurepip --default-pip
-
-
-
 # import asyncio
-# import wave
+# from vibevoice_tts1_5 import StreamingTTS15B
 
-# from whisper_stt import LocalWhisperSTT
-# from events import STTOutputEvent  # just to type-check / compare
+# # 1. Initialize (Pointing to the 1.5B Model)
+# tts_service = StreamingTTS15B(
+#     model_path="/home/robust/models/VibeVoice-1.5B", # <--- 1.5B Model
+#     voices_dir="/home/robust/voice_demo_docket/voice-demo/VibeVoice/demo/voices", # <--- Folder with .wav files
+#     device="cuda",
+#     inference_steps=30
+# )
 
-# INPUT_WAV = "kokoro_test.wav"  # 16kHz, mono, 16-bit PCM
+# # 2. Stream
+# # This will auto-load "Alice.wav", compute the 128-size tensor, and stream audio
+# text = "Hello, this is a test of the 1.5B model streaming from raw audio."
+# stream = tts_service.stream(text, voice_key="Alice")
 
-# async def main():
-#     stt = LocalWhisperSTT(
-#         model_size="small.en",
-#         sample_rate=16000,
-#         device="cuda",        # force GPU
-#         compute_type="default"  # or "float32" if you want to be explicit
-#     )
+# for chunk in stream:
+#     # Play or save audio
+#     pass
 
+"""
+Test script for VibeVoice TTS
+"""
 
-#     # 1. Read a WAV file and push its frames as chunks
-#     with wave.open(INPUT_WAV, "rb") as f:
-#         assert f.getnchannels() == 1, "WAV must be mono"
-#         assert f.getframerate() == 16000, "WAV must be 16kHz"
-#         assert f.getsampwidth() == 2, "WAV must be 16-bit"
-
-#         while True:
-#             data = f.readframes(320)  # ~20ms at 16kHz
-#             if not data:
-#                 break
-#             await stt.send_audio(data)
-
-#     # 2. Close stream to flush and end receive_events
-#     await stt.close()
-
-#     # 3. Collect transcripts
-#     async for event in stt.receive_events():
-#         print("Got STT event:", event)
-#         # If you want just text:
-#         if isinstance(event, STTOutputEvent):
-#             print("Final transcript:", event.text)
-
-# asyncio.run(main())
-
-
-
-
-# import asyncio
-# import wave
-# from pathlib import Path
-
-# from whisper_stt import LocalWhisperSTT   # <-- adjust if filename is different
-# from events import STTOutputEvent, STTChunkEvent  # just for isinstance checks
-
-# INPUT_WAV = "kokoro_test.wav"  # file written by Kokoro test
-
-
-# async def main():
-#     wav_path = Path(INPUT_WAV)
-#     if not wav_path.exists():
-#         print(f"[ERROR] WAV file not found: {wav_path.resolve()}")
-#         return
-
-#     print(f"[INFO] Using WAV file: {wav_path.resolve()}")
-
-#     # Open WAV and inspect format
-#     with wave.open(str(wav_path), "rb") as f:
-#         channels = f.getnchannels()
-#         sr = f.getframerate()
-#         width = f.getsampwidth()
-#         nframes = f.getnframes()
-
-#         print(f"[INFO] WAV channels: {channels}")
-#         print(f"[INFO] WAV sample rate: {sr}")
-#         print(f"[INFO] WAV sample width: {width} bytes")
-#         print(f"[INFO] WAV frames: {nframes}")
-
-#         if channels != 1:
-#             print("[ERROR] WAV must be mono (1 channel)")
-#             return
-#         if width != 2:
-#             print("[ERROR] WAV must be 16-bit (2 bytes per sample)")
-#             return
-
-#         # Create STT with audio sample rate from file (Whisper will resample to 16k internally)
-#         stt = LocalWhisperSTT(
-#             model_size="large-v3",
-#             sample_rate=sr,          # <= IMPORTANT: use the WAV's SR (likely 24000)
-#             device="cpu",           # or "cpu" if you want CPU
-#             compute_type="float32",  # safe
-#             silence_threshold=50.0,  # make VAD more permissive
-#             min_silence_chunks=3,    # detect utterance quickly
-#         )
-
-#         print("[INFO] Feeding audio chunks to LocalWhisperSTT...")
-
-#         # Read the whole WAV as chunks (~20ms per chunk at given SR)
-#         chunk_size_frames = int(sr * 0.02)  # ~20ms
-#         while True:
-#             data = f.readframes(chunk_size_frames)
-#             if not data:
-#                 break
-#             await stt.send_audio(data)
-
-#         print("[INFO] Done sending audio. Closing STT stream...")
-#         await stt.close()
-
-#         print("[INFO] Collecting STT events:")
-#         got_any = False
-
-#         async for event in stt.receive_events():
-#             got_any = True
-#             print(f"[DEBUG] Got STT event: {event}")
-
-#             if isinstance(event, STTOutputEvent):
-#                 print(f"[RESULT] Final transcript: {event.transcript!r}")
-#             elif isinstance(event, STTChunkEvent):
-#                 print(f"[PARTIAL] Chunk: {event.transcript!r}")
-
-
-#         if not got_any:
-#             print("[WARN] No STT events were produced at all.")
-
-
-# if __name__ == "__main__":
-#     asyncio.run(main())
+import asyncio
 import os
-os.environ["CT2_VERBOSE"] = "1"
+from vibevoice_new import VibeVoiceTTS
 
-import ctranslate2
+
+async def test_simple_generation():
+    """Test simple text-to-speech generation"""
+    print("Testing VibeVoice TTS...")
+    
+    # Initialize TTS
+    tts = VibeVoiceTTS(
+        model_path="microsoft/VibeVoice-1.5b",
+        voice_sample_path="/home/robust/voice_demo_docket/voice-demo/VibeVoice/demo/voices/en-Alice_woman.wav",  # Update with your voice file path
+        device=None,  # Auto-detect
+        cfg_scale=1.3,
+    )
+    
+    try:
+        # Test 1: Simple generation
+        print("\n--- Test 1: Simple generation ---")
+        audio_bytes = await tts.generate_complete("Hello, this is a test of the VibeVoice text to speech system.")
+        print(f"Generated audio: {len(audio_bytes)} bytes")
+        
+        # Save to file
+        output_path = "test_output.wav"
+        if len(audio_bytes) > 0:
+            # Note: This saves raw PCM, you may need to add WAV header
+            import wave
+            import numpy as np
+            
+            # Convert bytes back to int16 array
+            audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+            
+            # Save as WAV
+            with wave.open(output_path, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(24000)  # 24kHz
+                wav_file.writeframes(audio_array.tobytes())
+            
+            print(f"Saved audio to {output_path}")
+        
+        # Test 2: Multiple generations
+        print("\n--- Test 2: Multiple generations ---")
+        texts = [
+            "This is the first sentence.",
+            "Here is another one.",
+            "And finally, a third sentence."
+        ]
+        
+        for i, text in enumerate(texts):
+            print(f"Generating text {i+1}/{len(texts)}: {text}")
+            audio = await tts.generate_complete(text)
+            print(f"  Generated: {len(audio)} bytes")
+        
+    finally:
+        # Always cleanup
+        print("\nCleaning up...")
+        await tts.close()
+        print("Done!")
+
+
+async def test_streaming():
+    """Test streaming text-to-speech (placeholder for future implementation)"""
+    print("\n--- Test 3: Streaming mode (not fully implemented) ---")
+    
+    tts = VibeVoiceTTS(
+        model_path="microsoft/VibeVoice-1.5b",
+        voice_sample_path="voices/andrew.wav",
+    )
+    
+    try:
+        # Send multiple text chunks
+        await tts.send_text("Hello, ")
+        await tts.send_text("this is ")
+        await tts.send_text("streaming text.")
+        await tts.send_text("")  # Signal end
+        
+        print("Text queued for streaming generation")
+        
+        # In a full implementation, you would:
+        # async for chunk in tts.receive_events():
+        #     print(f"Received chunk: {len(chunk.audio)} bytes")
+        
+    finally:
+        await tts.close()
+
+
+async def main():
+    """Main test function"""
+    print("="*60)
+    print("VibeVoice TTS Test Suite")
+    print("="*60)
+    
+    # Run test
+    await test_simple_generation()
+    
+    # Uncomment to test streaming (not fully implemented)
+    # await test_streaming()
+    
+    print("\n" + "="*60)
+    print("All tests completed!")
+    print("="*60)
+
+
+if __name__ == "__main__":
+    # Run async main function
+    asyncio.run(main())

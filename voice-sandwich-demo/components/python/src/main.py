@@ -1,9 +1,9 @@
+import os
 import asyncio
 import contextlib
 from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
-import os
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
@@ -13,6 +13,7 @@ from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableGenerator
 from langgraph.checkpoint.memory import InMemorySaver
 from starlette.staticfiles import StaticFiles
+import re 
 
 # from assemblyai_stt import AssemblyAISTT
 # from components.python.src.cartesia_tts import CartesiaTTS
@@ -25,11 +26,12 @@ from events import (
     event_to_dict,
 )
 from utils import merge_async_iters
-from whisper_stt import LocalWhisperSTT 
+from fasterwhisper_stt import LocalWhisperSTT 
 from whisper_pytorch import WhisperPytorchSTT
 from kokoro_tts import KokoroTTS
 from models import get_ollama_model, get_groq_model
 from vibevoice_tts import VibeVoiceAsyncTTS
+from vibevoice_new import VibeVoiceTTS
 load_dotenv()
 
 # Static files are served from the shared web build output
@@ -74,6 +76,20 @@ The price for any sandwich is $5 plus $1 for each topping, meat, or cheese.
 
 ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
+from cartesia_prompts import CARTESIA_TTS_SYSTEM_PROMPT
+system_prompt_chatonly = """
+You are a friendly voice assistant having a natural conversation with the user.
+The user may speak in English, Malay, or Chinese, and you should respond in the same language or gently mix languages when it feels natural, like in real everyday speech.
+
+Keep your responses concise, warm, and easy to listen to. Speak in a flowing, storytelling style, as if you are chatting with a friend rather than giving instructions or lists. Let your sentences connect smoothly, avoiding rigid structures or point-by-point explanations.
+
+Do not use any markdown, symbols, or formatting. Output plain text only, suitable for a voice interface.
+Your goal is to sound human, relaxed, and engaging, making the conversation feel natural and effortless.
+
+${CARTESIA_TTS_SYSTEM_PROMPT}
+"""
+    
+
 
 # 1. Check which provider to use (Defaults to "groq" if not set)
 provider = os.getenv("LLM_PROVIDER", "groq").lower()
@@ -91,15 +107,15 @@ else:
     llm = get_groq_model(api_key=api_key)
 
 from data_visualisation.main import main2 as make_agent
-# agent = create_agent(
-#     model=llm,
-#     tools=[add_to_order, confirm_order],
-#     system_prompt=system_prompt,
-#     checkpointer=InMemorySaver(),
-# )
+agent = create_agent(
+    model=llm,
+    tools=[add_to_order, confirm_order],
+    system_prompt=system_prompt_chatonly,
+    checkpointer=InMemorySaver(),
+)
 
 
-agent = make_agent(llm)
+# agent = make_agent(llm)
 
 
 
@@ -134,10 +150,20 @@ async def _stt_stream(
     #         silence_threshold=50.0,  # make VAD more permissive
     #         min_silence_chunks=3,    # detect utterance quickly
     #     )
+    # stt = LocalWhisperSTT(
+    #     model_size="large-v3-turbo", # or "distil-large-v3" for 3x speed
+    #     device="cuda",         # FORCE CUDA
+    #     compute_type="float16" # FORCE FLOAT16
+    # )
+    # NEW IMPROVED WHISPER STT
     stt = LocalWhisperSTT(
-        model_size="large-v3-turbo", # or "distil-large-v3" for 3x speed
-        device="cuda",         # FORCE CUDA
-        compute_type="float16" # FORCE FLOAT16
+        base_silence_threshold=700.0,
+        energy_window_size=5,
+        speech_ratio_threshold=0.6,
+        end_of_speech_silence=1.0,
+        end_of_turn_silence=0.5,
+        min_speech_duration=0.8,
+        use_noise_reduction=False,  # Set True if very noisy
     )
 
     async def send_audio():
@@ -228,140 +254,8 @@ async def _agent_stream(
 
             # Signal end of turn
             yield AgentEndEvent.create()
-# async def _agent_stream(
-#     event_stream: AsyncIterator[VoiceAgentEvent],
-# ) -> AsyncIterator[VoiceAgentEvent]:
-#     """
-#     Transform stream: Voice Events → Voice Events (with Agent Responses)
-
-#     This function takes a stream of upstream voice agent events and processes them.
-#     When an stt_output event arrives, it passes the transcript to the LangChain agent.
-#     The agent streams back its response tokens as agent_chunk events.
-#     Tool calls and results are also emitted as separate events.
-#     All other upstream events are passed through unchanged.
-
-#     The passthrough pattern ensures downstream stages (like TTS) can observe all
-#     events in the pipeline, not just the ones this stage produces. This enables
-#     features like displaying partial transcripts while the agent is thinking.
-
-#     Args:
-#         event_stream: An async iterator of upstream voice agent events
-
-#     Yields:
-#         All upstream events plus agent_chunk, tool_call, and tool_result events
-#     """
-#     # Generate a unique thread ID for this conversation session
-#     # This allows the agent to maintain conversation context across multiple turns
-#     # using the checkpointer (InMemorySaver) configured in the agent
-#     thread_id = str(uuid4())
-
-#     # Process each event as it arrives from the upstream STT stage
-#     async for event in event_stream:
-#         # Pass through all events to downstream consumers
-#         yield event
-
-#         # When we receive a final transcript, invoke the agent
-#         if event.type == "stt_output":
-#             # Stream the agent's response using LangChain's astream method.
-#             # stream_mode="messages" yields message chunks as they're generated.
-#             stream = agent.astream(
-#                 {"messages": [HumanMessage(content=event.transcript)]},
-#                 {"configurable": {"thread_id": thread_id}},
-#                 stream_mode="messages",
-#             )
-
-#             # Iterate through the agent's streaming response. The stream yields
-#             # tuples of (message, metadata), but we only need the message.
-#             async for message, metadata in stream:
-#                 # Emit agent chunks (AI messages)
-#                 if isinstance(message, AIMessage):
-#                     # Extract and yield the text content from each message chunk
-#                     yield AgentChunkEvent.create(message.text)
-#                     # Emit tool calls if present
-#                     if hasattr(message, "tool_calls") and message.tool_calls:
-#                         for tool_call in message.tool_calls:
-#                             yield ToolCallEvent.create(
-#                                 id=tool_call.get("id", str(uuid4())),
-#                                 name=tool_call.get("name", "unknown"),
-#                                 args=tool_call.get("args", {}),
-#                             )
-
-#                 # Emit tool results (tool messages)
-#                 if isinstance(message, ToolMessage):
-#                     yield ToolResultEvent.create(
-#                         tool_call_id=getattr(message, "tool_call_id", ""),
-#                         name=getattr(message, "name", "unknown"),
-#                         result=str(message.content) if message.content else "",
-#                     )
-
-#             # Signal that the agent has finished responding for this turn
-#             yield AgentEndEvent.create()
 
 
-# async def _tts_stream(
-#     event_stream: AsyncIterator[VoiceAgentEvent],
-# ) -> AsyncIterator[VoiceAgentEvent]:
-#     """
-#     Transform stream: Voice Events → Voice Events (with Audio)
-
-#     This function takes a stream of upstream voice agent events and processes them.
-#     When agent_chunk events arrive, it sends the text to Cartesia for TTS synthesis.
-#     Audio is streamed back as tts_chunk events as it's generated.
-#     All upstream events are passed through unchanged.
-
-#     It uses merge_async_iters to combine two concurrent streams:
-#     - process_upstream(): Iterates through incoming events, yields them for
-#       passthrough, and sends agent text chunks to Cartesia for synthesis.
-#     - tts.receive_events(): Yields audio chunks from Cartesia as they are
-#       synthesized.
-
-#     The merge utility runs both iterators concurrently, yielding items from
-#     either stream as they become available. This allows audio generation to
-#     begin before the agent has finished generating all text, minimizing latency.
-
-#     Args:
-#         event_stream: An async iterator of upstream voice agent events
-
-#     Yields:
-#         All upstream events plus tts_chunk events for synthesized audio
-#     """
-#     # tts = VibeVoiceAsyncTTS(model_path = "/app/models/VibeVoice-Realtime-0.5B")
-
-#     tts = KokoroTTS()
-
-#     async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
-#         """
-#         Process upstream events, yielding them while sending text to Cartesia.
-
-#         This async generator serves two purposes:
-#         1. Pass through all upstream events (stt_chunk, stt_output, agent_chunk)
-#            so downstream consumers can observe the full event stream.
-#         2. Buffer agent_chunk text and send to Cartesia when agent_end arrives.
-#            This ensures the full response is sent at once for better TTS quality.
-#         """
-#         buffer: list[str] = []
-#         async for event in event_stream:
-#             # Pass through all events to downstream consumers
-#             yield event
-#             # Buffer agent text chunks
-#             if event.type == "agent_chunk":
-#                 buffer.append(event.text)
-#             # Send all buffered text to Cartesia when agent finishes
-#             if event.type == "agent_end":
-#                 await tts.send_text("".join(buffer))
-#                 buffer = []
-
-#     try:
-#         # Merge the processed upstream events with TTS audio events
-#         # Both streams run concurrently, yielding events as they arrive
-#         async for event in merge_async_iters(process_upstream(), tts.receive_events()):
-#             yield event
-#     finally:
-#         # Cleanup: close the WebSocket connection to Cartesia
-#         await tts.close()
-
-
-import re # Add this import at the top
 
 async def _tts_stream(
     event_stream: AsyncIterator[VoiceAgentEvent],
@@ -369,8 +263,29 @@ async def _tts_stream(
     
     # Initialize your TTS (VibeVoice or Kokoro)
     # tts = VibeVoiceAsyncTTS(model_path="/app/models/VibeVoice-Realtime-0.5B")
-    tts = VibeVoiceAsyncTTS(model_path="/home/robust/models/VibeVoice-Realtime-0.5B")
+    # tts = VibeVoiceAsyncTTS(
+    # model_path="/app/models/VibeVoice-1.5B",
+    # device="cuda",
+    # voice_preset=None,    # Or specific voice ID
+    # inference_steps=60,   # High quality
+    # temperature=0.3,
+    # # hf_repo_id="microsoft/VibeVoice-1.5B",
+    # hf_repo_id="microsoft/VibeVoice-Realtime-0.5B",
+# )
+
+    # kokoro tts
     # tts = KokoroTTS() 
+
+    # vibe 1.5b
+    tts = VibeVoiceTTS(
+        model_path="/home/robust/models/VibeVoice-1.5B",
+        voice_sample_path="/app/voice-demo/VibeVoice/demo/voices/en-Alice_woman.wav",
+        device="cuda",
+        cfg_scale=1.3,
+        chunk_size=2400,  # 0.1 seconds at 24kHz
+    )
+
+# The rest of your _tts_stream code should now work!
 
     async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
         # Buffer to accumulate partial text chunks
