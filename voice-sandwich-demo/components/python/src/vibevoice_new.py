@@ -510,6 +510,10 @@ class VibeVoiceTTS:
         
         # Text buffer for sentence-based processing
         self._text_buffer = ""
+
+        # Generation ID to track current generation stream
+        self._generation_id = 0
+        self._generation_lock = threading.Lock()
         
         # Load model synchronously on init
         self._load_model()
@@ -588,6 +592,30 @@ class VibeVoiceTTS:
         self._model.set_ddpm_inference_steps(num_steps=self.num_inference_steps)
         
         logger.info("Model loaded successfully!")
+
+    def interrupt(self):
+        """
+        Interrupt current generation immediately.
+        
+        Increments the generation ID, which invalidates any currently processing
+        or queued items. Also clears the input queue.
+        """
+        with self._generation_lock:
+            self._generation_id += 1
+            current_id = self._generation_id
+        
+        # Clear any pending text
+        while not self._input_queue.empty():
+            try:
+                self._input_queue.get_nowait()
+                self._input_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
+                
+        # Clear buffer
+        self._text_buffer = ""
+        
+        logger.info(f"TTS Interrupted. New generation ID: {current_id}")
     
     async def send_text(self, text: Optional[str]) -> None:
         """
@@ -602,13 +630,20 @@ class VibeVoiceTTS:
         if not text.strip():
             return
         
-        # Just queue the text - sentence detection happens in the worker
-        await self._input_queue.put(text)
+        # Pass current generation ID with the text
+        with self._generation_lock:
+            gen_id = self._generation_id
+            
+        await self._input_queue.put((gen_id, text))
     
     async def flush_buffer(self):
         """Force process remaining text (e.g., at end of stream)"""
+        # Get current ID for the flush command too
+        with self._generation_lock:
+            gen_id = self._generation_id
+            
         if self._text_buffer.strip():
-            await self._input_queue.put(("FLUSH", self._text_buffer.strip()))
+            await self._input_queue.put((gen_id, "FLUSH", self._text_buffer.strip()))
             self._text_buffer = ""
     
     async def receive_events(self) -> AsyncIterator[TTSChunkEvent]:
@@ -629,6 +664,9 @@ class VibeVoiceTTS:
                 if chunk is None:
                     break
                 
+                # Check for interruption signal (None audio with specific ID if we wanted to be fancy, 
+                # but simplest is just checking if we're receiving valid chunks)
+                
                 if isinstance(chunk, Exception):
                     logger.error(f"Generation Error: {chunk}")
                     continue
@@ -646,21 +684,39 @@ class VibeVoiceTTS:
         
         while not self._stop_event.is_set():
             try:
-                text = await self._input_queue.get()
+                item = await self._input_queue.get()
                 
-                if text is None:
+                if item is None:
                     break
                 
-                # Handle flush command
-                if isinstance(text, tuple) and text[0] == "FLUSH":
-                    text = text[1]
+                # Unpack item (gen_id, text) or (gen_id, FLUSH, text)
+                if not isinstance(item, tuple):
+                    # Legacy support/Sanity check
+                    continue
+
+                gen_id = item[0]
+                
+                # Check if this item is from an old generation
+                with self._generation_lock:
+                    if gen_id != self._generation_id:
+                        logger.info(f"Skipping obsolete item from gen {gen_id} (current: {self._generation_id})")
+                        self._input_queue.task_done()
+                        continue
+                
+                # Parse text content
+                text = ""
+                if len(item) == 3 and item[1] == "FLUSH":
+                    text = item[2]
+                elif len(item) == 2:
+                    text = item[1]
                 
                 # Process valid text
-                if text.strip():
+                if text and text.strip():
                     await loop.run_in_executor(
                         executor,
                         self._run_sync_stream,
                         text,
+                        gen_id, # Pass gen_id to sync worker
                         loop
                     )
                 
@@ -676,15 +732,21 @@ class VibeVoiceTTS:
         await self._output_queue.put(None)
         executor.shutdown(wait=False)
     
-    def _run_sync_stream(self, text: str, loop: asyncio.AbstractEventLoop):
+    def _run_sync_stream(self, text: str, gen_id: int, loop: asyncio.AbstractEventLoop):
         """
         Synchronous generation with streaming output
         
         Args:
             text: Text to synthesize
+            gen_id: Generation ID for this request
             loop: Event loop for thread-safe callback
         """
         try:
+            # Short-circuit if already interrupted before generation starts
+            with self._generation_lock:
+                 if gen_id != self._generation_id:
+                     return
+
             # Format text with speaker label (required by VibeVoice processor)
             formatted_text = self._format_text_with_speaker(text)
             
@@ -734,8 +796,13 @@ class VibeVoiceTTS:
                 # Stream in chunks
                 total_samples = len(audio)
                 for i in range(0, total_samples, self.chunk_size):
+                    # Check for stop/interruption or new generation
                     if self._stop_event.is_set():
                         break
+                    
+                    with self._generation_lock:
+                        if gen_id != self._generation_id:
+                            break
                     
                     chunk = audio[i:i + self.chunk_size]
                     

@@ -79,7 +79,7 @@ class KokoroTTS:
 
     def __init__(
         self,
-        lang_code: str = "z",          # 'a' = American English, 'b' = British, etc.
+        lang_code: str = "a",          # 'a' = American English, 'b' = British, etc.
         voice: str = "af_heart",       # see Kokoro VOICES.md
         sample_rate: int = 24000,
         chunk_ms: int = 50,            # how big each streamed audio chunk is
@@ -105,9 +105,52 @@ class KokoroTTS:
         self._text_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
         self._close_signal = asyncio.Event()
 
-        # Load Kokoro pipeline (synchronous; do it once)
-        # You may want to move this to a background thread if startup cost is high.
-        self._pipeline = KPipeline(lang_code=self.lang_code)
+        # Cache pipelines: lang_code -> KPipeline
+        self._pipelines = {}
+        
+        # Determine language based on lang_code
+        # Simplified: 'z' is for Chinese, others might need specific codes
+        # Assuming lang_code is correct Kokoro code
+        self._ensure_pipeline(self.lang_code)
+
+    def _ensure_pipeline(self, lang_code: str):
+        """Ensure pipeline for language exists."""
+        if lang_code not in self._pipelines:
+            print(f"[Kokoro] Loading pipeline for '{lang_code}'...")
+            try:
+                self._pipelines[lang_code] = KPipeline(lang_code=lang_code)
+            except Exception as e:
+                print(f"[Kokoro] Error loading pipeline for '{lang_code}': {e}. Falling back to 'a'.")
+                if 'a' not in self._pipelines:
+                     self._pipelines['a'] = KPipeline(lang_code='a')
+                # Don't update self.lang_code here, handled in set_language or usage
+                
+    def set_language(self, lang_code: str):
+        """Switch the active TTS language."""
+        if lang_code == self.lang_code:
+            return
+            
+        # Basic validation/mapping if needed
+        # Kokoro codes: a(US), b(UK), j(Japanese), z(Chinese), etc.
+        valid_codes = ['a', 'b', 'j', 'z', 'e', 'f', 'h', 'i', 'p'] 
+        
+        if lang_code not in valid_codes:
+            print(f"[Kokoro] Ignored unsupported language code: {lang_code}")
+            return
+            
+        print(f"[Kokoro] Switching language: {self.lang_code} -> {lang_code}")
+        self.lang_code = lang_code
+        self._ensure_pipeline(self.lang_code)
+        
+        # Optional: Switch default voice based on language?
+        # For now, keep user selected voice if compatible, or let Kokoro handle it.
+        # Ideally we might map language -> default voice.
+        if lang_code == 'z' and self.voice == 'af_heart':
+             self.voice = 'zf_xiaobei' # Example switch to a Chinese voice
+             print(f"[Kokoro] Switched to Chinese voice: {self.voice}")
+        elif lang_code == 'a' and self.voice == 'zf_xiaobei':
+             self.voice = 'af_heart'
+             print(f"[Kokoro] Switched to English voice: {self.voice}")
 
     # -------------------------------------------------------------------------
     # Public API (same as ElevenLabsTTS)
@@ -200,7 +243,15 @@ class KokoroTTS:
         """
         audio_segments: List[np.ndarray] = []
 
-        for _, _, audio in self._pipeline(
+        if self.lang_code in self._pipelines:
+            pipeline = self._pipelines[self.lang_code]
+        else:
+            # Fallback
+            pipeline = self._pipelines.get('a')
+            if not pipeline: # Should not happen if init worked
+                 return b""
+
+        for _, _, audio in pipeline(
             text,
             voice=self.voice,
             speed=self.speed,

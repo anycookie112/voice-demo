@@ -367,9 +367,9 @@ class LocalWhisperSTT:
             # Sentinel: end of stream
             if chunk is None:
                 if buffer and has_speech:
-                    text = await self._transcribe_async(bytes(buffer))
+                    text, language = await self._transcribe_async(bytes(buffer))
                     if text:
-                        yield STTOutputEvent.create(text)
+                        yield STTOutputEvent.create(text, language)
                 break
             
             # === NOISE CALIBRATION PHASE ===
@@ -472,10 +472,10 @@ class LocalWhisperSTT:
                 speech_chunks_count = 0
                 
                 # Transcribe
-                text = await self._transcribe_async(pcm_data)
+                text, language = await self._transcribe_async(pcm_data)
                 
                 if text:
-                    yield STTOutputEvent.create(text)
+                    yield STTOutputEvent.create(text, language)
 
     async def send_audio(self, audio_chunk: bytes) -> None:
         """Queue audio for processing"""
@@ -558,12 +558,12 @@ class LocalWhisperSTT:
     # TRANSCRIPTION
     # =========================================================================
     
-    async def _transcribe_async(self, pcm_bytes: bytes) -> str:
+    async def _transcribe_async(self, pcm_bytes: bytes) -> Tuple[str, str]:
         """Non-blocking transcription"""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._transcribe_blocking, pcm_bytes)
     
-    def _transcribe_blocking(self, pcm_bytes: bytes) -> str:
+    def _transcribe_blocking(self, pcm_bytes: bytes) -> Tuple[str, str]:
         """Blocking transcription with noise reduction and filtering"""
         audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         
@@ -600,12 +600,12 @@ class LocalWhisperSTT:
             allowed_langs = {'en', 'ms', 'zh', 'yue'}
             if info.language not in allowed_langs:
                 logger.debug(f"⏭️  Ignored language: {info.language} ({info.language_probability:.2f})")
-                return ""
+                return "", ""
             
             # Combine segments
             texts = [s.text.strip() for s in segments if s.text.strip()]
             if not texts:
-                return ""
+                return "", ""
             
             raw_text = " ".join(texts)
             
@@ -615,11 +615,11 @@ class LocalWhisperSTT:
             if filtered_text:
                 logger.info(f"✓ [{info.language}] {filtered_text}")
             
-            return filtered_text
+            return filtered_text, info.language
             
         except Exception as e:
             logger.error(f"❌ Transcription error: {e}")
-            return ""
+            return "", ""
     
     def _filter_hallucinations(self, text: str) -> str:
         """Filter common Whisper hallucinations and noise artifacts"""

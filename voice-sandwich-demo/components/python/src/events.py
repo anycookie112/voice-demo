@@ -66,13 +66,16 @@ class STTChunkEvent:
     Not guaranteed to be the final transcription.
     """
 
+    language: Optional[str] = None
+    """Detected language code (e.g. 'en', 'zh', 'ms')."""
+
     ts: int
     """Unix timestamp (milliseconds since epoch) when the event was created."""
 
     @classmethod
-    def create(cls, transcript: str) -> "STTChunkEvent":
+    def create(cls, transcript: str, language: Optional[str] = None) -> "STTChunkEvent":
         """Factory method to create an STTChunkEvent event with current timestamp."""
-        return cls(type="stt_chunk", transcript=transcript, ts=_now_ms())
+        return cls(type="stt_chunk", transcript=transcript, language=language, ts=_now_ms())
 
 
 @dataclass
@@ -93,13 +96,16 @@ class STTOutputEvent:
     This is the text that will be processed by the LLM agent.
     """
 
+    language: Optional[str] = None
+    """Detected language code (e.g. 'en', 'zh', 'ms')."""
+
     ts: int
     """Unix timestamp (milliseconds since epoch) when the event was created."""
 
     @classmethod
-    def create(cls, transcript: str) -> "STTOutputEvent":
+    def create(cls, transcript: str, language: Optional[str] = None) -> "STTOutputEvent":
         """Factory method to create an STTOutputEvent event with current timestamp."""
-        return cls(type="stt_output", transcript=transcript, ts=_now_ms())
+        return cls(type="stt_output", transcript=transcript, language=language, ts=_now_ms())
 
 
 STTEvent = Union[STTChunkEvent, STTOutputEvent]
@@ -273,8 +279,23 @@ class TTSEndEvent:
         return cls(type="tts_end", ts=_now_ms())
 
 
+@dataclass
+class TTSStopEvent:
+    """
+    Event emitted when TTS playback should be interrupted/stopped immediately.
+    
+    This is typically triggered when the user starts speaking while the agent is still talking.
+    """
+    type: Literal["tts_stop"]
+    ts: int
+
+    @classmethod
+    def create(cls) -> "TTSStopEvent":
+        return cls(type="tts_stop", ts=_now_ms())
+
+
 # Update VoiceAgentEvent union
-VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent, TTSEndEvent]
+VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent, TTSEndEvent, TTSStopEvent]
 
 
 def event_to_dict(event: VoiceAgentEvent) -> dict:
@@ -282,9 +303,19 @@ def event_to_dict(event: VoiceAgentEvent) -> dict:
     if isinstance(event, UserInputEvent):
         return {"type": event.type, "ts": event.ts}
     elif isinstance(event, STTChunkEvent):
-        return {"type": event.type, "transcript": event.transcript, "ts": event.ts}
+        return {
+            "type": event.type, 
+            "transcript": event.transcript, 
+            "language": event.language,
+            "ts": event.ts
+        }
     elif isinstance(event, STTOutputEvent):
-        return {"type": event.type, "transcript": event.transcript, "ts": event.ts}
+        return {
+            "type": event.type, 
+            "transcript": event.transcript, 
+            "language": event.language,
+            "ts": event.ts
+        }
     elif isinstance(event, AgentChunkEvent):
         return {"type": event.type, "text": event.text, "ts": event.ts}
     elif isinstance(event, AgentEndEvent):
@@ -312,6 +343,8 @@ def event_to_dict(event: VoiceAgentEvent) -> dict:
             "ts": event.ts,
         }
     elif isinstance(event, TTSEndEvent):
+        return {"type": event.type, "ts": event.ts}
+    elif isinstance(event, TTSStopEvent):
         return {"type": event.type, "ts": event.ts}
     else:
         raise ValueError(f"Unknown event type: {type(event)}")

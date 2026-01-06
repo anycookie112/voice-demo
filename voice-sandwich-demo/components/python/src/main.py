@@ -23,6 +23,7 @@ from events import (
     ToolCallEvent,
     ToolResultEvent,
     VoiceAgentEvent,
+    TTSStopEvent,
     event_to_dict,
 )
 from utils import merge_async_iters
@@ -78,13 +79,26 @@ ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
 from cartesia_prompts import CARTESIA_TTS_SYSTEM_PROMPT
 system_prompt_chatonly = """
-You are a friendly voice assistant having a natural conversation with the user.
-The user may speak in English, Malay, or Chinese, and you should respond in the same language or gently mix languages when it feels natural, like in real everyday speech.
+Here’s a rewritten version of your system prompt, adapted into a customer service chatbot while keeping the voice-friendly, natural style you want:
 
-Keep your responses concise, warm, and easy to listen to. Speak in a flowing, storytelling style, as if you are chatting with a friend rather than giving instructions or lists. Let your sentences connect smoothly, avoiding rigid structures or point-by-point explanations.
+You are a friendly customer service chatbot for a food and beverage shop, having natural conversations with customers.
+Customers may speak in English, Malay, or Chinese, and you should reply in the same language or gently mix languages when it feels natural, like real everyday conversation.
 
-Do not use any markdown, symbols, or formatting. Output plain text only, suitable for a voice interface.
-Your goal is to sound human, relaxed, and engaging, making the conversation feel natural and effortless.
+When customers ask about products, prices, variations, or promotions, clearly explain the details in a warm, conversational way, as if you are helping them at the counter. You should confidently share prices, available options, and current deals without sounding robotic or overly formal.
+
+The shop offers the following items.
+For sandwiches, there are chicken katsu priced at 6.9 and tuna priced at 5.9.
+For drinks, milk costs 3.9 and coke costs 2.9.
+For hot snacks, hotdogs are 5 and bagels are also 5.
+
+There are ongoing promotions.
+When a customer buys six sandwiches, they get one sandwich for free.
+Customers can also add one dollar to any sandwich to upgrade and receive a free milk.
+
+Keep responses concise, friendly, and easy to listen to. Speak in a smooth, flowing style, like chatting with a customer in person. Avoid lists, bullet points, or rigid explanations.
+Do not use markdown, symbols, or special formatting. Output plain text only, suitable for a voice interface.
+
+Your goal is to sound helpful, human, and relaxed, making customers feel comfortable asking questions and placing orders naturally.
 
 ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
@@ -295,6 +309,32 @@ async def _tts_stream(
             # 1. Pass ALL events to the UI immediately (So text bubbles appear)
             yield event
 
+            # handle interruption
+            if event.type == "stt_chunk" or event.type == "stt_output":
+                if event.transcript.strip():
+                     if hasattr(tts, 'interrupt'):
+                         tts.interrupt()
+                     yield TTSStopEvent.create()
+                     text_buffer = "" # clear buffer
+
+            # handle language switching
+            if event.type == "stt_output" and event.language:
+                # Map Whisper language to Kokoro language
+                # Whisper: 'en', 'zh', 'ms', 'yue', etc.
+                # Kokoro: 'a'/'b' (English), 'z' (Chinese), 'j' (Japanese), etc.
+                
+                lang_map = {
+                    'en': 'a', # Default to American English
+                    'zh': 'z', # Chinese
+                    # 'ms': 'a', # Malay -> English (Fallback/No specific Malay model yet?)
+                    # Add more mappings as Kokoro supports them
+                }
+                
+                target_lang = lang_map.get(event.language, 'a') # Default to English
+                if hasattr(tts, 'set_language'):
+                    tts.set_language(target_lang)
+
+
             # 2. Process Text for TTS
             if event.type == "agent_chunk":
                 text_buffer += event.text
@@ -359,7 +399,7 @@ async def websocket_endpoint(websocket: WebSocket):
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     # uvicorn.run("main:app", port=8015, reload=True)
     uvicorn.run(
         app, 
