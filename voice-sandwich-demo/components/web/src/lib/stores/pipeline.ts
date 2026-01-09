@@ -65,6 +65,10 @@ function createTurnStore() {
       }));
     },
 
+    ttsEnd(ts: number) {
+      update((t) => ({ ...t, ttsEndTs: ts }));
+    },
+
     finishTurn() {
       update((t) => ({ ...t, active: false }));
     },

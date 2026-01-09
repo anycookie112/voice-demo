@@ -1,7 +1,7 @@
 [project]
 name = "python-voice-agent"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "accelerate>=1.12.0",
     "diffusers>=0.36.0",
@@ -9,6 +9,8 @@ dependencies = [
     "faster-whisper>=1.2.1",
     "flash-attn",
     "kokoro>=0.9.4",
+    "jieba",
+    "ordered-set",
     "langchain",
     "langchain-anthropic>=1.2.0",
     "langchain-core>=1.1.0",
@@ -17,19 +19,20 @@ dependencies = [
     "langchain-openai>=1.1.6",
     "langgraph>=1.0.4",
     "matplotlib>=3.10.8",
-    "numpy>=2.3.5",
-    "openai-whisper>=20250625",
+    "numpy>=2.0,<2.4",
     "pandas>=2.3.3",
+    "pip",
     "python-dotenv",
     "rich>=14.2.0",
     "spacy>=3.8.11",
     "transformers==4.51.3",
     "uvicorn>=0.38.0",
     "websockets",
-
     # 🔥 PyTorch CUDA
     "torch",
     "torchvision",
+    "pypinyin>=0.55.0",
+    "cn2an>=0.5.23",
 ]
 
 # 🔥 CUDA 13.0 PyTorch index

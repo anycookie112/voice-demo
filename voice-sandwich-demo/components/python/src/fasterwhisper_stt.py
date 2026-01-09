@@ -236,7 +236,7 @@ import re
 import numpy as np
 from typing import AsyncIterator, Optional, Tuple
 from faster_whisper import WhisperModel
-from events import STTEvent, STTOutputEvent
+from events import STTChunkEvent, STTOutputEvent, STTEvent
 from collections import deque
 
 logging.basicConfig(level=logging.INFO)
@@ -248,6 +248,7 @@ class LocalWhisperSTT:
     Enhanced Whisper STT with:
     - Rolling energy window for better noise detection
     - Adaptive silence threshold
+
     - Minimum speech duration before transcription
     - Better hallucination filtering
     - End-of-turn detection with confirmation window
@@ -475,6 +476,11 @@ class LocalWhisperSTT:
                 text, language = await self._transcribe_async(pcm_data)
                 
                 if text:
+                    # SIMULATED CHUNK EVENT causing a waterfall update
+                    # Because Faster-Whisper is not truly streaming partials, 
+                    # we send a chunk event right before the final output event.
+                    # This ensures the frontend registers the STT activity on the timeline/waterfall.
+                    yield STTChunkEvent.create(transcript=text, language=language)
                     yield STTOutputEvent.create(text, language)
 
     async def send_audio(self, audio_chunk: bytes) -> None:
@@ -518,6 +524,7 @@ class LocalWhisperSTT:
         
         self.is_calibrated = True
     
+
     def _is_speech_in_window(self) -> bool:
         """Check if rolling window contains enough loud samples to be speech"""
         if len(self.energy_window) < 2:
@@ -528,6 +535,7 @@ class LocalWhisperSTT:
         loud_ratio = loud_count / len(self.energy_window)
         
         return loud_ratio >= self.speech_ratio_threshold
+
     
     def _update_adaptive_threshold(self):
         """Continuously adjust threshold based on background noise"""
@@ -566,6 +574,30 @@ class LocalWhisperSTT:
     def _transcribe_blocking(self, pcm_bytes: bytes) -> Tuple[str, str]:
         """Blocking transcription with noise reduction and filtering"""
         audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        
+        try:
+            segments, info = self._model.transcribe(
+                audio,
+                beam_size=1,
+                without_timestamps=True,
+                initial_prompt="English, Malay, Mandarin, Cantonese",
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=800)
+            )
+            
+            # Simple simulation of partial Transcription if needed, 
+            # but Whisper works in full segments.
+            # We can't easily emit "STTChunk" during one model.transcribe call for a short buffer.
+            # However, since we process phrase-by-phrase, each phrase is a "final" output for that phrase.
+            
+            text = " ".join([segment.text for segment in segments])
+            text = self._filter_hallucinations(text)
+            
+            return text, info.language
+            
+        except Exception as e:
+            logger.error(f"Transcription error: {e}")
+            return "", ""
         
         # Apply noise reduction if enabled
         if self.use_noise_reduction and self.noise_profile is not None:

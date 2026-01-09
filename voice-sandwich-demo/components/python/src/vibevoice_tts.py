@@ -1,11 +1,15 @@
 import asyncio
 import os
+import sys
 import threading
 import logging
 import numpy as np
 from typing import AsyncIterator, Optional
 from concurrent.futures import ThreadPoolExecutor
 from huggingface_hub import snapshot_download
+
+# Add VibeVoice path for demo module
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'voice-demo', 'VibeVoice'))
 
 # Assuming TTSChunkEvent is imported from your events module
 try:

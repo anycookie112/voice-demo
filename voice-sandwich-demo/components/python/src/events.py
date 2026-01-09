@@ -13,7 +13,7 @@ processing, and TTS output.
 import base64
 import time
 from dataclasses import dataclass
-from typing import Literal, Union
+from typing import Literal, Union,Optional
 
 
 def _now_ms() -> int:
@@ -66,16 +66,16 @@ class STTChunkEvent:
     Not guaranteed to be the final transcription.
     """
 
-    language: Optional[str] = None
-    """Detected language code (e.g. 'en', 'zh', 'ms')."""
-
     ts: int
     """Unix timestamp (milliseconds since epoch) when the event was created."""
+
+    language: Optional[str] = None
+    """Detected language code (e.g. 'en', 'zh', 'ms')."""
 
     @classmethod
     def create(cls, transcript: str, language: Optional[str] = None) -> "STTChunkEvent":
         """Factory method to create an STTChunkEvent event with current timestamp."""
-        return cls(type="stt_chunk", transcript=transcript, language=language, ts=_now_ms())
+        return cls(type="stt_chunk", transcript=transcript, ts=_now_ms(), language=language)
 
 
 @dataclass
@@ -96,16 +96,16 @@ class STTOutputEvent:
     This is the text that will be processed by the LLM agent.
     """
 
-    language: Optional[str] = None
-    """Detected language code (e.g. 'en', 'zh', 'ms')."""
-
     ts: int
     """Unix timestamp (milliseconds since epoch) when the event was created."""
+
+    language: Optional[str] = None
+    """Detected language code (e.g. 'en', 'zh', 'ms')."""
 
     @classmethod
     def create(cls, transcript: str, language: Optional[str] = None) -> "STTOutputEvent":
         """Factory method to create an STTOutputEvent event with current timestamp."""
-        return cls(type="stt_output", transcript=transcript, language=language, ts=_now_ms())
+        return cls(type="stt_output", transcript=transcript, ts=_now_ms(), language=language)
 
 
 STTEvent = Union[STTChunkEvent, STTOutputEvent]
@@ -294,14 +294,27 @@ class TTSStopEvent:
         return cls(type="tts_stop", ts=_now_ms())
 
 
+@dataclass
+class LogEvent:
+    """Event for backend-to-frontend logging."""
+    type: Literal["log"]
+    message: str
+    ts: int
+
+    @classmethod
+    def create(cls, message: str) -> "LogEvent":
+        return cls(type="log", message=message, ts=_now_ms())
+
 # Update VoiceAgentEvent union
-VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent, TTSEndEvent, TTSStopEvent]
+VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent, TTSEndEvent, TTSStopEvent, LogEvent]
 
 
 def event_to_dict(event: VoiceAgentEvent) -> dict:
     """Convert a VoiceAgentEvent to a JSON-serializable dictionary."""
     if isinstance(event, UserInputEvent):
         return {"type": event.type, "ts": event.ts}
+    elif isinstance(event, LogEvent):
+        return {"type": event.type, "message": event.message, "ts": event.ts}
     elif isinstance(event, STTChunkEvent):
         return {
             "type": event.type, 

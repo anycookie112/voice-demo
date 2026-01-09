@@ -11,7 +11,7 @@ import { createAudioCapture, createAudioPlayback } from "./audio";
 import { get } from "svelte/store";
 
 export interface VoiceSession {
-  start: () => Promise<void>;
+  start: (customPrompt?: string) => Promise<void>;
   stop: () => void;
 }
 
@@ -117,6 +117,20 @@ export function createVoiceSession(): VoiceSession {
         }, 300);
         break;
       }
+      
+      case "log":
+        logs.log(event.message);
+        break;
+      
+      case "tts_end":
+        console.log("TTS End Event Received");
+        currentTurn.ttsEnd(event.ts);
+        break;
+      
+      case "tts_stop":
+        console.log("TTS Stop Event Received - Interrupting playback");
+        audioPlayback.stop();
+        break;
     //   case "tts_chunk": {
     //     // We don't need to add the activity here anymore because agent_chunk handles it.
     //     // However, if you want a fallback (in case audio arrives before text), use this:
@@ -142,7 +156,7 @@ export function createVoiceSession(): VoiceSession {
     currentTurn.finishTurn();
   }
 
-  async function start(): Promise<void> {
+  async function start(customPrompt?: string): Promise<void> {
     // Reset all state
     session.reset();
     currentTurn.reset();
@@ -156,7 +170,11 @@ export function createVoiceSession(): VoiceSession {
 
     // Connect WebSocket
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    let wsUrl = `${protocol}//${window.location.host}/ws`;
+    if (customPrompt) {
+      wsUrl += `?custom_prompt=${encodeURIComponent(customPrompt)}`;
+    }
+    ws = new WebSocket(wsUrl);
     ws.binaryType = "arraybuffer";
 
     ws.onopen = async () => {

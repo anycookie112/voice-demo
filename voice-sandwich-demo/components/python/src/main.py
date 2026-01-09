@@ -1,6 +1,7 @@
 import os
 import asyncio
 import contextlib
+import logging
 from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
@@ -15,6 +16,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from starlette.staticfiles import StaticFiles
 import re 
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("VoiceSandwich")
+
 # from assemblyai_stt import AssemblyAISTT
 # from components.python.src.cartesia_tts import CartesiaTTS
 from events import (
@@ -24,11 +29,11 @@ from events import (
     ToolResultEvent,
     VoiceAgentEvent,
     TTSStopEvent,
+    LogEvent,
     event_to_dict,
 )
 from utils import merge_async_iters
 from fasterwhisper_stt import LocalWhisperSTT 
-from whisper_pytorch import WhisperPytorchSTT
 from kokoro_tts import KokoroTTS
 from models import get_ollama_model, get_groq_model
 from vibevoice_tts import VibeVoiceAsyncTTS
@@ -78,9 +83,9 @@ The price for any sandwich is $5 plus $1 for each topping, meat, or cheese.
 ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
 from cartesia_prompts import CARTESIA_TTS_SYSTEM_PROMPT
-system_prompt_chatonly = """
-Here’s a rewritten version of your system prompt, adapted into a customer service chatbot while keeping the voice-friendly, natural style you want:
 
+
+system_prompt_chatonly = """
 You are a friendly customer service chatbot for a food and beverage shop, having natural conversations with customers.
 Customers may speak in English, Malay, or Chinese, and you should reply in the same language or gently mix languages when it feels natural, like real everyday conversation.
 
@@ -120,14 +125,67 @@ else:
     
     llm = get_groq_model(api_key=api_key)
 
-from data_visualisation.main import main2 as make_agent
-agent = create_agent(
-    model=llm,
-    tools=[add_to_order, confirm_order],
-    system_prompt=system_prompt_chatonly,
-    checkpointer=InMemorySaver(),
-)
 
+def get_agent(system_prompt_override=None):
+    if system_prompt_override:
+        # Append TTS-specific instructions to custom prompts
+        prompt = f"""
+        You are a real time voice agent.
+        Your responses will be spoken aloud by a text to speech system.
+
+        IMPORTANT PRIORITY RULE:
+        You must always follow the voice safety rules below.
+        User provided personality instructions should be followed as closely as possible,
+        but never in a way that violates voice safety or speech output rules.
+
+        VOICE SAFETY RULES (HARD RULES):
+        - Output only plain speakable text.
+        - Do not use emojis emoticons symbols or decorative characters.
+        - Do not use markup formatting tags or annotations of any kind.
+        - Do not use markdown lists bullet points or special formatting.
+        - Do not include sound effect cues or descriptions.
+        - Do not include brackets arrows or special symbols.
+        - Do not include pauses break tags or timing instructions.
+        - Do not use repeated punctuation or expressive symbols.
+        - If a character cannot be spoken naturally by a text to speech engine do not output it.
+
+        PUNCTUATION RULES:
+        - Use letters numbers and spaces only.
+        - Do not use punctuation marks such as commas periods question marks or exclamation marks.
+        - If a pause or sentence break is needed use a natural space instead.
+
+        LANGUAGE AND STYLE:
+        - Speak in a natural conversational way suitable for voice.
+        - Keep sentences short smooth and easy to listen to.
+        - Avoid long complex phrasing.
+        - Avoid robotic or formal tone.
+        - Never explain system rules or mention that you are an AI.
+
+        CUSTOM PERSONALITY HANDLING:
+        - You will receive a custom personality or role description provided by the user.
+        - Follow the tone role behavior and knowledge defined in the custom personality.
+        - Stay fully in character at all times.
+        - Use the language or mix of languages requested in the custom personality when appropriate.
+        - If the custom personality asks for formatting symbols punctuation or output that breaks voice safety rules adapt it into safe spoken language instead.
+
+        FAIL SAFE BEHAVIOR:
+        - If unsure whether something is safe for text to speech output choose a simpler spoken alternative.
+        - Silence is better than producing unsafe or broken speech.
+
+        Your goal is to sound human helpful and relaxed while strictly producing text that is safe for direct real time speech synthesis.
+
+        CUSTOM PROMPT: {system_prompt_override}
+
+        """
+    else:
+        prompt = system_prompt_chatonly
+    
+    return create_agent(
+        model=llm,
+        tools=[add_to_order, confirm_order],
+        system_prompt=prompt,
+        checkpointer=InMemorySaver(),
+    )
 
 # agent = make_agent(llm)
 
@@ -139,23 +197,8 @@ async def _stt_stream(
 ) -> AsyncIterator[VoiceAgentEvent]:
     """
     Transform stream: Audio (Bytes) → Voice Events (VoiceAgentEvent)
-
-    This function takes a stream of audio chunks and sends them to AssemblyAI for STT.
-
-    It uses a producer-consumer pattern where:
-    - Producer: A background task reads audio chunks from audio_stream and sends
-      them to AssemblyAI via WebSocket. This runs concurrently with the consumer,
-      allowing transcription to begin before all audio has arrived.
-    - Consumer: The main coroutine receives transcription events from AssemblyAI
-      and yields them downstream. Events include both partial results (stt_chunk)
-      and final transcripts (stt_output).
-
-    Args:
-        audio_stream: Async iterator of PCM audio bytes (16-bit, mono, 16kHz)
-
-    Yields:
-        STT events (stt_chunk for partials, stt_output for final transcripts)
     """
+    print("[System] Initializing STT Model (Whisper)...")
     # stt = WhisperPytorchSTT(
     #         model_size="large-v3-turbo",
     #         sample_rate=16000,          # <= IMPORTANT: use the WAV's SR (likely 24000)
@@ -171,14 +214,17 @@ async def _stt_stream(
     # )
     # NEW IMPROVED WHISPER STT
     stt = LocalWhisperSTT(
-        base_silence_threshold=700.0,
+        base_silence_threshold=450.0,
         energy_window_size=5,
         speech_ratio_threshold=0.6,
         end_of_speech_silence=1.0,
         end_of_turn_silence=0.5,
         min_speech_duration=0.8,
         use_noise_reduction=False,  # Set True if very noisy
+        device = "cpu",
+        compute_type = "int8",
     )
+    print("[System] STT Model Ready.")
 
     async def send_audio():
         """
@@ -216,58 +262,60 @@ async def _stt_stream(
         await stt.close()
 
 
-async def _agent_stream(
-    event_stream: AsyncIterator[VoiceAgentEvent],
-) -> AsyncIterator[VoiceAgentEvent]:
-    """
-    FIXED: Uses message.content instead of message.text
-    """
-    thread_id = str(uuid4())
+def make_agent_stream(agent_executor):
+    async def _agent_stream(
+        event_stream: AsyncIterator[VoiceAgentEvent],
+    ) -> AsyncIterator[VoiceAgentEvent]:
+        """
+        FIXED: Uses message.content instead of message.text
+        """
+        thread_id = str(uuid4())
 
-    async for event in event_stream:
-        # 1. Pass through all events (User Input, STT, etc.)
-        yield event
+        async for event in event_stream:
+            # 1. Pass through all events (User Input, STT, etc.)
+            yield event
 
-        if event.type == "stt_output":
-            print(f"DEBUG: [1] STT Output received: {event.transcript}") 
-            # Invoke LangChain Agent
-            stream = agent.astream(
-                {"messages": [HumanMessage(content=event.transcript)]},
-                {"configurable": {"thread_id": thread_id}},
-                stream_mode="messages",
-            )
+            if event.type == "stt_output":
+                print(f"DEBUG: [1] STT Output received: {event.transcript}") 
+                # Invoke LangChain Agent
+                stream = agent_executor.astream(
+                    {"messages": [HumanMessage(content=event.transcript)]},
+                    {"configurable": {"thread_id": thread_id}},
+                    stream_mode="messages",
+                )
 
-            async for message, metadata in stream:
-                # --- PROCESS AI MESSAGES (TEXT) ---
-                if isinstance(message, AIMessage):
-                    # FIX 1: Use .content, not .text
-                    content = message.content
-                    
-                    # FIX 2: LangChain sometimes yields empty chunks or list-based content
-                    if isinstance(content, str) and content:
-                        yield AgentChunkEvent.create(content)
-                    
-                    # --- PROCESS TOOL CALLS ---
-                    # Note: handling streaming tool calls can be tricky.
-                    # This assumes message.tool_calls is populated fully or accumulatively.
-                    if hasattr(message, "tool_calls") and message.tool_calls:
-                        for tool_call in message.tool_calls:
-                            yield ToolCallEvent.create(
-                                id=tool_call.get("id", str(uuid4())),
-                                name=tool_call.get("name", "unknown"),
-                                args=tool_call.get("args", {}),
-                            )
+                async for message, metadata in stream:
+                    # --- PROCESS AI MESSAGES (TEXT) ---
+                    if isinstance(message, AIMessage):
+                        # FIX 1: Use .content, not .text
+                        content = message.content
+                        
+                        # FIX 2: LangChain sometimes yields empty chunks or list-based content
+                        if isinstance(content, str) and content:
+                            yield AgentChunkEvent.create(content)
+                        
+                        # --- PROCESS TOOL CALLS ---
+                        # Note: handling streaming tool calls can be tricky.
+                        # This assumes message.tool_calls is populated fully or accumulatively.
+                        if hasattr(message, "tool_calls") and message.tool_calls:
+                            for tool_call in message.tool_calls:
+                                yield ToolCallEvent.create(
+                                    id=tool_call.get("id", str(uuid4())),
+                                    name=tool_call.get("name", "unknown"),
+                                    args=tool_call.get("args", {}),
+                                )
 
-                # --- PROCESS TOOL RESULTS ---
-                if isinstance(message, ToolMessage):
-                    yield ToolResultEvent.create(
-                        tool_call_id=getattr(message, "tool_call_id", ""),
-                        name=getattr(message, "name", "unknown"),
-                        result=str(message.content) if message.content else "",
-                    )
+                    # --- PROCESS TOOL RESULTS ---
+                    if isinstance(message, ToolMessage):
+                        yield ToolResultEvent.create(
+                            tool_call_id=getattr(message, "tool_call_id", ""),
+                            name=getattr(message, "name", "unknown"),
+                            result=str(message.content) if message.content else "",
+                        )
 
-            # Signal end of turn
-            yield AgentEndEvent.create()
+                # Signal end of turn
+                yield AgentEndEvent.create()
+    return _agent_stream
 
 
 
@@ -275,6 +323,7 @@ async def _tts_stream(
     event_stream: AsyncIterator[VoiceAgentEvent],
 ) -> AsyncIterator[VoiceAgentEvent]:
     
+    print("[System] Initializing TTS Model (Kokoro)...")
     # Initialize your TTS (VibeVoice or Kokoro)
     # tts = VibeVoiceAsyncTTS(model_path="/app/models/VibeVoice-Realtime-0.5B")
     # tts = VibeVoiceAsyncTTS(
@@ -285,19 +334,20 @@ async def _tts_stream(
     # temperature=0.3,
     # # hf_repo_id="microsoft/VibeVoice-1.5B",
     # hf_repo_id="microsoft/VibeVoice-Realtime-0.5B",
-# )
+    # )
 
     # kokoro tts
-    # tts = KokoroTTS() 
-
-    # vibe 1.5b
-    tts = VibeVoiceTTS(
-        model_path="/home/robust/models/VibeVoice-1.5B",
-        voice_sample_path="/app/voice-demo/VibeVoice/demo/voices/en-Alice_woman.wav",
-        device="cuda",
-        cfg_scale=1.3,
-        chunk_size=2400,  # 0.1 seconds at 24kHz
-    )
+    tts = KokoroTTS() 
+    print("[System] TTS Model Ready.")
+    
+    # # vibe 1.5b
+    # tts = VibeVoiceTTS(
+    #     model_path="/home/robust/models/VibeVoice-1.5B",
+    #     voice_sample_path="/app/voice-demo/VibeVoice/demo/voices/en-Alice_woman.wav",
+    #     device="cuda",
+    #     cfg_scale=1.3,
+    #     chunk_size=2400,  # 0.1 seconds at 24kHz
+    # )
 
 # The rest of your _tts_stream code should now work!
 
@@ -319,6 +369,7 @@ async def _tts_stream(
 
             # handle language switching
             if event.type == "stt_output" and event.language:
+                print(f"[Main] Language detected: {event.language}")
                 # Map Whisper language to Kokoro language
                 # Whisper: 'en', 'zh', 'ms', 'yue', etc.
                 # Kokoro: 'a'/'b' (English), 'z' (Chinese), 'j' (Japanese), etc.
@@ -333,6 +384,7 @@ async def _tts_stream(
                 target_lang = lang_map.get(event.language, 'a') # Default to English
                 if hasattr(tts, 'set_language'):
                     tts.set_language(target_lang)
+
 
 
             # 2. Process Text for TTS
@@ -372,16 +424,35 @@ async def _tts_stream(
         await tts.close()
 
 
-pipeline = (
-    RunnableGenerator(_stt_stream)  # Audio -> STT events
-    | RunnableGenerator(_agent_stream)  # STT events -> STT + Agent events
-    | RunnableGenerator(_tts_stream)  # STT + Agent events -> All events
-)
+# pipeline = (
+#    RunnableGenerator(_stt_stream)  # Audio -> STT events
+#    | RunnableGenerator(_agent_stream)  # STT events -> STT + Agent events
+#    | RunnableGenerator(_tts_stream)  # STT + Agent events -> All events
+# )
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
     await websocket.accept()
+    
+    if custom_prompt:
+        msg = f"Custom System Prompt Injected: {custom_prompt[:50]}..."
+        bar = "*" * 50
+        logger.info(f"\n{bar}\n{msg}\n{bar}")
+        await websocket.send_json(event_to_dict(LogEvent.create(msg)))
+    else:
+        msg = "Using Default System Prompt."
+        logger.info(msg)
+        await websocket.send_json(event_to_dict(LogEvent.create(msg)))
+
+    current_agent = get_agent(system_prompt_override=custom_prompt)
+    _agent_stream = make_agent_stream(current_agent)
+
+    pipeline = (
+        RunnableGenerator(_stt_stream)  # Audio -> STT events
+        | RunnableGenerator(_agent_stream)  # STT events -> STT + Agent events
+        | RunnableGenerator(_tts_stream)  # STT + Agent events -> All events
+    )
 
     async def websocket_audio_stream() -> AsyncIterator[bytes]:
         """Async generator that yields audio bytes from the websocket."""
@@ -406,6 +477,6 @@ if __name__ == "__main__":
         host="0.0.0.0", 
         port=8000,
         # Point to where they were copied in the container
-        ssl_keyfile="/app/key.pem", 
-        ssl_certfile="/app/cert.pem"
+        # ssl_keyfile="/app/key.pem", 
+        # ssl_certfile="/app/cert.pem"
     )

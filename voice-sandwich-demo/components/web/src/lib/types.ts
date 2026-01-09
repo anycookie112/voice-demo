@@ -3,6 +3,7 @@ export type ServerEvent =
   | { type: "stt_chunk"; ts: number; transcript: string }
   | { type: "stt_output"; ts: number; transcript: string }
   | { type: "agent_chunk"; ts: number; text: string }
+  | { type: "agent_end"; ts: number }
   | {
       type: "tool_call";
       ts: number;
@@ -10,7 +11,11 @@ export type ServerEvent =
       args: Record<string, unknown>;
     }
   | { type: "tool_result"; ts: number; name: string; result: string }
-  | { type: "tts_chunk"; audio: string; ts: number };
+  | { type: "tts_chunk"; audio: string; ts: number }
+  | { type: "tts_end"; ts: number }
+  | { type: "tts_stop"; ts: number }
+  | { type: "log"; ts: number; message: string };
+
 
 // Session state
 export interface SessionState {

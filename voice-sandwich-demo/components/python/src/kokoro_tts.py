@@ -74,6 +74,10 @@ from kokoro import KPipeline  # pip install kokoro>=0.9.4
 from events import TTSChunkEvent
 
 
+
+# Global Pipeline Cache (Loaded once per process)
+_GLOBAL_PIPELINES = {}
+
 class KokoroTTS:
     _close_signal: asyncio.Event
 
@@ -105,26 +109,30 @@ class KokoroTTS:
         self._text_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
         self._close_signal = asyncio.Event()
 
-        # Cache pipelines: lang_code -> KPipeline
-        self._pipelines = {}
-        
-        # Determine language based on lang_code
-        # Simplified: 'z' is for Chinese, others might need specific codes
-        # Assuming lang_code is correct Kokoro code
+        # Check global cache
         self._ensure_pipeline(self.lang_code)
 
     def _ensure_pipeline(self, lang_code: str):
-        """Ensure pipeline for language exists."""
-        if lang_code not in self._pipelines:
-            print(f"[Kokoro] Loading pipeline for '{lang_code}'...")
+        """Ensure pipeline for language exists in GLOBAL cache."""
+        if lang_code not in _GLOBAL_PIPELINES:
+            print(f"[Kokoro] Loading pipeline for '{lang_code}' (Global Cache)...")
             try:
-                self._pipelines[lang_code] = KPipeline(lang_code=lang_code)
+                _GLOBAL_PIPELINES[lang_code] = KPipeline(lang_code=lang_code)
+                print(f"[Kokoro] Successfully loaded pipeline for '{lang_code}'")
             except Exception as e:
                 print(f"[Kokoro] Error loading pipeline for '{lang_code}': {e}. Falling back to 'a'.")
-                if 'a' not in self._pipelines:
-                     self._pipelines['a'] = KPipeline(lang_code='a')
-                # Don't update self.lang_code here, handled in set_language or usage
-                
+                import traceback
+                traceback.print_exc()
+                if 'a' not in _GLOBAL_PIPELINES:
+                     _GLOBAL_PIPELINES['a'] = KPipeline(lang_code='a')
+        else:
+             print(f"[Kokoro] Using cached pipeline for '{lang_code}'")
+
+    @property
+    def _pipeline(self):
+        # Helper to get current pipeline from cache
+        return _GLOBAL_PIPELINES.get(self.lang_code) or _GLOBAL_PIPELINES.get('a')
+
     def set_language(self, lang_code: str):
         """Switch the active TTS language."""
         if lang_code == self.lang_code:
@@ -141,10 +149,7 @@ class KokoroTTS:
         print(f"[Kokoro] Switching language: {self.lang_code} -> {lang_code}")
         self.lang_code = lang_code
         self._ensure_pipeline(self.lang_code)
-        
-        # Optional: Switch default voice based on language?
-        # For now, keep user selected voice if compatible, or let Kokoro handle it.
-        # Ideally we might map language -> default voice.
+
         if lang_code == 'z' and self.voice == 'af_heart':
              self.voice = 'zf_xiaobei' # Example switch to a Chinese voice
              print(f"[Kokoro] Switched to Chinese voice: {self.voice}")
@@ -242,24 +247,24 @@ class KokoroTTS:
         Blocking: run Kokoro pipeline on text and return PCM16 bytes at sample_rate.
         """
         audio_segments: List[np.ndarray] = []
-
-        if self.lang_code in self._pipelines:
-            pipeline = self._pipelines[self.lang_code]
-        else:
-            # Fallback
-            pipeline = self._pipelines.get('a')
-            if not pipeline: # Should not happen if init worked
-                 return b""
-
-        for _, _, audio in pipeline(
-            text,
+        
+        # Use our property to get pipeline
+        pipeline = self._pipeline
+        if not pipeline:
+            print("[Kokoro] No pipeline available, skipping synthesis.")
+            return b""
+            
+        generator = pipeline(
+            text, 
             voice=self.voice,
-            speed=self.speed,
-        ):
-            # audio is a torch.Tensor; convert to float32 NumPy [-1, 1]
-            audio_np = audio.detach().cpu().numpy().astype(np.float32)
-            audio_segments.append(audio_np)
+            speed=self.speed, 
+            split_pattern=r'\n+'
+        )
 
+        for i, (gs, ps, audio) in enumerate(generator):
+             # audio is float32 numpy array, typically 24000Hz (or model default)
+             audio_segments.append(audio)
+             
         if not audio_segments:
             return b""
 
