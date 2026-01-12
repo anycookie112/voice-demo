@@ -214,7 +214,7 @@ async def _stt_stream(
     # )
     # NEW IMPROVED WHISPER STT
     stt = LocalWhisperSTT(
-        base_silence_threshold=450.0,
+        base_silence_threshold=200.0,
         energy_window_size=5,
         speech_ratio_threshold=0.6,
         end_of_speech_silence=1.0,
@@ -284,19 +284,31 @@ def make_agent_stream(agent_executor):
                     stream_mode="messages",
                 )
 
+                print("DEBUG: [2] Starting agent stream...")
+                full_response = ""  # Accumulate full response for debugging
+                
                 async for message, metadata in stream:
                     # --- PROCESS AI MESSAGES (TEXT) ---
                     if isinstance(message, AIMessage):
-                        # FIX 1: Use .content, not .text
                         content = message.content
                         
-                        # FIX 2: LangChain sometimes yields empty chunks or list-based content
-                        if isinstance(content, str) and content:
+                        # Handle different content types
+                        if isinstance(content, list):
+                            # Sometimes content is a list of dicts with 'text' keys
+                            text_parts = []
+                            for item in content:
+                                if isinstance(item, dict) and 'text' in item:
+                                    text_parts.append(item['text'])
+                                elif isinstance(item, str):
+                                    text_parts.append(item)
+                            content = ''.join(text_parts)
+                        
+                        if isinstance(content, str) and content.strip():
+                            full_response += content
+                            print(f"DEBUG: [3] AIMessage chunk: '{content}'")
                             yield AgentChunkEvent.create(content)
                         
                         # --- PROCESS TOOL CALLS ---
-                        # Note: handling streaming tool calls can be tricky.
-                        # This assumes message.tool_calls is populated fully or accumulatively.
                         if hasattr(message, "tool_calls") and message.tool_calls:
                             for tool_call in message.tool_calls:
                                 yield ToolCallEvent.create(
@@ -314,6 +326,7 @@ def make_agent_stream(agent_executor):
                         )
 
                 # Signal end of turn
+                print(f"DEBUG: [4] Agent stream finished. Full response: '{full_response[:100]}...'")
                 yield AgentEndEvent.create()
     return _agent_stream
 
@@ -349,14 +362,10 @@ async def _tts_stream(
     #     chunk_size=2400,  # 0.1 seconds at 24kHz
     # )
 
-# The rest of your _tts_stream code should now work!
-
     async def process_upstream() -> AsyncIterator[VoiceAgentEvent]:
-        # Buffer to accumulate partial text chunks
         text_buffer = ""
         
         async for event in event_stream:
-            # 1. Pass ALL events to the UI immediately (So text bubbles appear)
             yield event
 
             # handle interruption
@@ -389,6 +398,7 @@ async def _tts_stream(
 
             # 2. Process Text for TTS
             if event.type == "agent_chunk":
+                print(f"DEBUG: [TTS] Received agent_chunk: {event.text[:30]}...")
                 text_buffer += event.text
                 
                 # Check if we have a full sentence (ends in . ? ! followed by space or newline)
@@ -402,6 +412,7 @@ async def _tts_stream(
                         
                         # Send the complete sentence to TTS
                         if sentence.strip():
+                            print(f"DEBUG: [TTS] Sending sentence to TTS: {sentence[:50]}...")
                             await tts.send_text(sentence)
                         
                         # Remove processed sentence from buffer
@@ -412,6 +423,7 @@ async def _tts_stream(
             
             # 3. Flush remaining text when agent is done
             elif event.type == "agent_end":
+                print(f"DEBUG: [TTS] Agent end, flushing buffer: {text_buffer[:30] if text_buffer else 'empty'}...")
                 if text_buffer.strip():
                     await tts.send_text(text_buffer)
                 text_buffer = "" # Reset for next turn
@@ -430,6 +442,8 @@ async def _tts_stream(
 #    | RunnableGenerator(_tts_stream)  # STT + Agent events -> All events
 # )
 
+
+from starlette.websockets import WebSocketDisconnect
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
@@ -456,15 +470,36 @@ async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
 
     async def websocket_audio_stream() -> AsyncIterator[bytes]:
         """Async generator that yields audio bytes from the websocket."""
-        while True:
-            data = await websocket.receive_bytes()
-            yield data
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                yield data
+        except WebSocketDisconnect:
+            logger.info("Client disconnected gracefully")
+        except Exception as e:
+            logger.warning(f"WebSocket receive error: {e}")
 
-    output_stream = pipeline.atransform(websocket_audio_stream())
+    try:
+        output_stream = pipeline.atransform(websocket_audio_stream())
 
-    # Process all events from the pipeline, sending events back to the client
-    async for event in output_stream:
-        await websocket.send_json(event_to_dict(event))
+        # Process all events from the pipeline, sending events back to the client
+        async for event in output_stream:
+            try:
+                await websocket.send_json(event_to_dict(event))
+            except WebSocketDisconnect:
+                logger.info("Client disconnected during send")
+                break
+            except Exception as e:
+                logger.warning(f"Error sending event: {e}")
+                break
+    except WebSocketDisconnect:
+        logger.info("Session ended by client")
+    except asyncio.CancelledError:
+        logger.info("Session cancelled")
+    except Exception as e:
+        logger.error(f"Session error: {e}")
+    finally:
+        logger.info("✓ Session cleanup complete")
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

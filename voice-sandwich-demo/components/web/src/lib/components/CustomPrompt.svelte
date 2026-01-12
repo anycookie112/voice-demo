@@ -41,7 +41,7 @@
 
       Bread A (Info)
       Bread B (Info)`}
-    />
+    ></textarea>
     <button
       on:click={confirmPrompt}
       disabled={isConfirming || !prompt.trim()}

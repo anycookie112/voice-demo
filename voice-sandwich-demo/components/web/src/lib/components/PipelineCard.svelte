@@ -1,7 +1,7 @@
 <script lang="ts">
   import { currentTurn } from '../stores';
-  import Pipeline from './Pipeline.svelte';
-  import LatencyWaterfall from './LatencyWaterfall.svelte';
+  // import Pipeline from './Pipeline.svelte';
+  // import LatencyWaterfall from './LatencyWaterfall.svelte';
 </script>
 
 <div
@@ -20,7 +20,7 @@
     </span>
   </div>
 
-  <Pipeline />
-  <LatencyWaterfall />
+  <!-- <Pipeline /> -->
+  <!-- <LatencyWaterfall /> -->
 </div>
 

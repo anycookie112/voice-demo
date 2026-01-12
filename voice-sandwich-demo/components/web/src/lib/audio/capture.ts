@@ -7,6 +7,8 @@ class PCMProcessor extends AudioWorkletProcessor {
     this.targetSampleRate = 16000;
     this.resampleRatio = sampleRate / this.targetSampleRate;
     this.resampleIndex = 0;
+    this.levelAccumulator = 0;
+    this.levelSampleCount = 0;
   }
 
   process(inputs) {
@@ -14,6 +16,23 @@ class PCMProcessor extends AudioWorkletProcessor {
     if (!input || !input[0]) return true;
 
     const channelData = input[0];
+
+    // Calculate RMS level for visualization
+    let sumSquares = 0;
+    for (let i = 0; i < channelData.length; i++) {
+      sumSquares += channelData[i] * channelData[i];
+    }
+    const rms = Math.sqrt(sumSquares / channelData.length);
+    this.levelAccumulator += rms;
+    this.levelSampleCount++;
+
+    // Send level update every ~50ms (about 4 process calls at typical buffer sizes)
+    if (this.levelSampleCount >= 4) {
+      const avgLevel = this.levelAccumulator / this.levelSampleCount;
+      this.port.postMessage({ type: 'level', level: avgLevel });
+      this.levelAccumulator = 0;
+      this.levelSampleCount = 0;
+    }
 
     for (let i = 0; i < channelData.length; i++) {
       this.resampleIndex += 1;
@@ -30,7 +49,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     while (this.buffer.length >= CHUNK_SIZE) {
       const chunk = this.buffer.splice(0, CHUNK_SIZE);
       const int16Array = new Int16Array(chunk);
-      this.port.postMessage(int16Array.buffer, [int16Array.buffer]);
+      this.port.postMessage({ type: 'audio', data: int16Array.buffer }, [int16Array.buffer]);
     }
 
     return true;
@@ -39,6 +58,8 @@ class PCMProcessor extends AudioWorkletProcessor {
 
 registerProcessor('pcm-processor', PCMProcessor);
 `;
+
+import { audioLevel } from "../stores/audioLevel";
 
 export interface AudioCapture {
   start: (onChunk: (chunk: ArrayBuffer) => void) => Promise<void>;
@@ -78,8 +99,15 @@ export function createAudioCapture(): AudioCapture {
     const source = audioContext.createMediaStreamSource(mediaStream);
     workletNode = new AudioWorkletNode(audioContext, "pcm-processor");
 
+
     workletNode.port.onmessage = (event) => {
-      onChunk(event.data);
+      const data = event.data;
+      if (data.type === 'level') {
+        // Update the audio level store for visualization
+        audioLevel.set(Math.min(1, data.level * 3)); // Amplify for visibility
+      } else if (data.type === 'audio') {
+        onChunk(data.data);
+      }
     };
 
     source.connect(workletNode);
@@ -95,6 +123,9 @@ export function createAudioCapture(): AudioCapture {
       mediaStream.getTracks().forEach((track) => track.stop());
       mediaStream = null;
     }
+
+    // Reset audio level to zero when stopped
+    audioLevel.set(0);
   }
 
   return { start, stop };
