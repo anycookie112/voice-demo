@@ -61,7 +61,7 @@ app.add_middleware(
 
 
 def add_to_order(item: str, quantity: int) -> str:
-    """Add an item to the customer's sandwich order."""
+    """Add an item to the customer's order."""
     return f"Added {quantity} x {item} to the order."
 
 

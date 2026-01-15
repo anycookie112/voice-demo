@@ -579,10 +579,16 @@ class LocalWhisperSTT:
             segments, info = self._model.transcribe(
                 audio,
                 beam_size=1,
+                task = "transcribe",
+                best_of = 2,
+                language = "en",
                 without_timestamps=True,
-                initial_prompt="English, Malay, Mandarin, Cantonese",
+                # initial_prompt="English, Malay, Mandarin, Cantonese",
+                log_progress = True,
                 vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=800)
+                vad_parameters=dict(min_silence_duration_ms=800),
+
+
             )
             
             # Simple simulation of partial Transcription if needed, 
