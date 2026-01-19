@@ -1,3 +1,4 @@
+import re
 import asyncio
 import contextlib
 import logging
@@ -11,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableGenerator
 from starlette.staticfiles import StaticFiles
-import re 
+from starlette.websockets import WebSocketDisconnect
 
 # Configure logging
 logging.basicConfig(
@@ -196,8 +197,8 @@ def make_agent_stream(agent_executor):
                 # Signal end of turn
                 logger.debug(f"[4] Agent stream finished. Full response: '{full_response[:100]}...'")
                 yield AgentEndEvent.create()
-    return _agent_stream
 
+    return _agent_stream
 
 
 async def _tts_stream(
@@ -262,8 +263,6 @@ async def _tts_stream(
                 if hasattr(tts, 'set_language'):
                     tts.set_language(target_lang)
 
-
-
             # 2. Process Text for TTS
             if event.type == "agent_chunk":
                 logger.debug(f"[TTS] Received agent_chunk: {event.text[:30]}...")
@@ -303,15 +302,12 @@ async def _tts_stream(
     finally:
         await tts.close()
 
-
 # pipeline = (
 #    RunnableGenerator(_stt_stream)  # Audio -> STT events
 #    | RunnableGenerator(_agent_stream)  # STT events -> STT + Agent events
 #    | RunnableGenerator(_tts_stream)  # STT + Agent events -> All events
 # )
 
-
-from starlette.websockets import WebSocketDisconnect
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
