@@ -20,7 +20,6 @@ import re
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("VoiceSandwich")
 
-# from components.python.src.cartesia_tts import CartesiaTTS
 from events import (
     AgentChunkEvent,
     AgentEndEvent,
