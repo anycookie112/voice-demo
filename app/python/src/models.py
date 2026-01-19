@@ -41,5 +41,6 @@ def get_groq_model(
         max_tokens=max_tokens,
     )
     return llm
+
 # response = llm.invoke("Write a poem about a robot learning to love.")
 # print(response)

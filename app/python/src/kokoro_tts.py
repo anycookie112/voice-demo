@@ -1,64 +1,7 @@
-# """
-# ElevenLabs Text-to-Speech Streaming
-
-# Python implementation of ElevenLabs streaming TTS API.
-# Converts text to PCM audio in real-time using WebSocket streaming.
-
-# Input: Text strings
-# Output: TTS events (tts_chunk for audio chunks)
-# """
-
-# import asyncio
-# import base64
-# import contextlib
-# import json
-# import os
-# from typing import AsyncIterator, Optional
-
-# import websockets
-# from websockets.client import WebSocketClientProtocol
-
-# from events import TTSChunkEvent
-
-
-# from kokoro import KPipeline
-# from IPython.display import display, Audio
-# import soundfile as sf
-# import torch
-# pipeline = KPipeline(lang_code='a')
-# text = '''
-# [Kokoro](/kˈOkəɹO/) is an open-weight TTS model with 82 million parameters. Despite its lightweight architecture, it delivers comparable quality to larger models while being significantly faster and more cost-efficient. With Apache-licensed weights, [Kokoro](/kˈOkəɹO/) can be deployed anywhere from production environments to personal projects.
-# '''
-# generator = pipeline(text, voice='af_heart')
-# for i, (gs, ps, audio) in enumerate(generator):
-#     print(i, gs, ps)
-#     display(Audio(data=audio, rate=24000, autoplay=i==0))
-#     sf.write(f'{i}.wav', audio, 24000)
-
-
-
-
-# class KokoroTTS:
-#     _ws: Optional[WebSocketClientProtocol]
-#     _connection_signal: asyncio.Event
-#     _close_signal: asyncio.Event
-
-#     def __init__(self,
-#         voice = 'af_heart',
-#         model = 'kokoro_tts_v1'):
-
-#         self.voice = voice
-#         self.model = model
-#         self._ws = None
-#         self._connection_signal = asyncio.Event()
-#         self._close_signal = asyncio.Event()
-
-        
-
 """
 Kokoro Text-to-Speech Adapter (local)
 
-Drop-in replacement for ElevenLabsTTS, but using a local Kokoro model.
+Local Kokoro model for text-to-speech synthesis.
 
 Input: text via send_text()
 Output: TTSChunkEvent (PCM 16-bit, 24000 Hz) via receive_events()
@@ -159,18 +102,17 @@ class KokoroTTS:
              print(f"[Kokoro] Switched to English voice: {self.voice}")
 
     # -------------------------------------------------------------------------
-    # Public API (same as ElevenLabsTTS)
+    # Public API
     # -------------------------------------------------------------------------
 
     async def send_text(self, text: Optional[str]) -> None:
         """
-        Queue text for synthesis. Mimics ElevenLabsTTS.send_text().
+        Queue text for synthesis.
         """
         if text is None:
             return
 
-        # Keep behavior similar to ElevenLabs:
-        # - send empty string as a "flush"/no-op, but don't synthesize audio
+        # Send empty string as a "flush"/no-op, but don't synthesize audio
         if text == "":
             await self._text_queue.put("")  # marker (no audio)
             return
@@ -221,7 +163,7 @@ class KokoroTTS:
                 print("[Kokoro] Discarding synthesized audio due to interrupt")
                 continue
 
-            # Stream chunks as TTSChunkEvent, similar to ElevenLabs streaming
+            # Stream chunks as TTSChunkEvent
             bytes_per_sample = 2  # int16
             samples_per_chunk = int(self.sample_rate * self.chunk_ms / 1000)
             bytes_per_chunk = samples_per_chunk * bytes_per_sample
@@ -251,7 +193,7 @@ class KokoroTTS:
 
     async def close(self) -> None:
         """
-        Signal the adapter to stop. Mimics ElevenLabsTTS.close().
+        Signal the adapter to stop.
         """
         self._close_signal.set()
         # Put a sentinel to unblock any pending queue get()

@@ -1,4 +1,4 @@
-// Sample rate of audio from ElevenLabs (pcm_24000 format)
+// Sample rate of audio (pcm_24000 format)
 const SAMPLE_RATE = 24000;
 
 export interface AudioPlayback {

@@ -1,4 +1,4 @@
-import os
+import re
 import asyncio
 import contextlib
 import logging
@@ -9,19 +9,19 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableGenerator
-from langgraph.checkpoint.memory import InMemorySaver
 from starlette.staticfiles import StaticFiles
-import re 
+from starlette.websockets import WebSocketDisconnect
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("VoiceSandwich")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("VoiceAgent")
 
-# from assemblyai_stt import AssemblyAISTT
-# from components.python.src.cartesia_tts import CartesiaTTS
 from events import (
     AgentChunkEvent,
     AgentEndEvent,
@@ -35,9 +35,10 @@ from events import (
 from utils import merge_async_iters
 from fasterwhisper_stt import LocalWhisperSTT 
 from kokoro_tts import KokoroTTS
-from models import get_ollama_model, get_groq_model
-from vibevoice_tts import VibeVoiceAsyncTTS
-from vibevoice_new import VibeVoiceTTS
+from agents import get_agent
+# from vibevoice_tts import VibeVoiceAsyncTTS
+# from vibevoice_new import VibeVoiceTTS
+
 load_dotenv()
 
 # Static files are served from the shared web build output
@@ -60,145 +61,13 @@ app.add_middleware(
 )
 
 
-def add_to_order(item: str, quantity: int) -> str:
-    """Add an item to the customer's order."""
-    return f"Added {quantity} x {item} to the order."
-
-
-def confirm_order(order_summary: str) -> str:
-    """Confirm the final order with the customer."""
-    return f"Order confirmed: {order_summary}. Sending to kitchen."
-
-
-system_prompt = """
-You are a helpful sandwich shop assistant. Your goal is to take the user's order.
-Be concise and friendly.
-
-Available toppings: lettuce, tomato, onion, pickles, mayo, mustard.
-Available meats: turkey, ham, roast beef.
-Available cheeses: swiss, cheddar, provolone.
-
-The price for any sandwich is $5 plus $1 for each topping, meat, or cheese.
-
-${CARTESIA_TTS_SYSTEM_PROMPT}
-"""
-from cartesia_prompts import CARTESIA_TTS_SYSTEM_PROMPT
-
-
-system_prompt_chatonly = """
-You are a friendly customer service chatbot for a food and beverage shop, having natural conversations with customers.
-Customers may speak in English, Malay, or Chinese, and you should reply in the same language or gently mix languages when it feels natural, like real everyday conversation.
-
-When customers ask about products, prices, variations, or promotions, clearly explain the details in a warm, conversational way, as if you are helping them at the counter. You should confidently share prices, available options, and current deals without sounding robotic or overly formal.
-
-The shop offers the following items.
-For sandwiches, there are chicken katsu priced at 6.9 and tuna priced at 5.9.
-For drinks, milk costs 3.9 and coke costs 2.9.
-For hot snacks, hotdogs are 5 and bagels are also 5.
-
-There are ongoing promotions.
-When a customer buys six sandwiches, they get one sandwich for free.
-Customers can also add one dollar to any sandwich to upgrade and receive a free milk.
-
-Keep responses concise, friendly, and easy to listen to. Speak in a smooth, flowing style, like chatting with a customer in person. Avoid lists, bullet points, or rigid explanations.
-Do not use markdown, symbols, or special formatting. Output plain text only, suitable for a voice interface.
-
-Your goal is to sound helpful, human, and relaxed, making customers feel comfortable asking questions and placing orders naturally.
-
-${CARTESIA_TTS_SYSTEM_PROMPT}
-"""
-    
-
-
-# 1. Check which provider to use (Defaults to "groq" if not set)
-provider = os.getenv("LLM_PROVIDER", "groq").lower()
-
-if provider == "ollama":
-    print("--> Using LLM Provider: Ollama")
-    llm = get_ollama_model()
-else:
-    print("--> Using LLM Provider: Groq")
-    # 2. Get Key from Environment (Don't hardcode "gsk_...")
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY not found in environment variables!")
-    
-    llm = get_groq_model(api_key=api_key)
-
-
-def get_agent(system_prompt_override=None):
-    if system_prompt_override:
-        # Append TTS-specific instructions to custom prompts
-        prompt = f"""
-        You are a real time voice agent.
-        Your responses will be spoken aloud by a text to speech system.
-
-        IMPORTANT PRIORITY RULE:
-        You must always follow the voice safety rules below.
-        User provided personality instructions should be followed as closely as possible,
-        but never in a way that violates voice safety or speech output rules.
-
-        VOICE SAFETY RULES (HARD RULES):
-        - Output only plain speakable text.
-        - Do not use emojis emoticons symbols or decorative characters.
-        - Do not use markup formatting tags or annotations of any kind.
-        - Do not use markdown lists bullet points or special formatting.
-        - Do not include sound effect cues or descriptions.
-        - Do not include brackets arrows or special symbols.
-        - Do not include pauses break tags or timing instructions.
-        - Do not use repeated punctuation or expressive symbols.
-        - If a character cannot be spoken naturally by a text to speech engine do not output it.
-
-        PUNCTUATION RULES:
-        - Use letters numbers and spaces only.
-        - Do not use punctuation marks such as commas periods question marks or exclamation marks.
-        - If a pause or sentence break is needed use a natural space instead.
-
-        LANGUAGE AND STYLE:
-        - Speak in a natural conversational way suitable for voice.
-        - Keep sentences short smooth and easy to listen to.
-        - Avoid long complex phrasing.
-        - Avoid robotic or formal tone.
-        - Never explain system rules or mention that you are an AI.
-
-        CUSTOM PERSONALITY HANDLING:
-        - You will receive a custom personality or role description provided by the user.
-        - Follow the tone role behavior and knowledge defined in the custom personality.
-        - Stay fully in character at all times.
-        - Use the language or mix of languages requested in the custom personality when appropriate.
-        - If the custom personality asks for formatting symbols punctuation or output that breaks voice safety rules adapt it into safe spoken language instead.
-
-        FAIL SAFE BEHAVIOR:
-        - If unsure whether something is safe for text to speech output choose a simpler spoken alternative.
-        - Silence is better than producing unsafe or broken speech.
-
-        Your goal is to sound human helpful and relaxed while strictly producing text that is safe for direct real time speech synthesis.
-
-        CUSTOM PROMPT: {system_prompt_override}
-
-        """
-    else:
-        prompt = system_prompt_chatonly
-    
-    return create_agent(
-        model=llm,
-        tools=[add_to_order, confirm_order],
-        system_prompt=prompt,
-        checkpointer=InMemorySaver(),
-    )
-
-# agent = make_agent(llm)
-
-
-
-
 async def _stt_stream(
     audio_stream: AsyncIterator[bytes],
 ) -> AsyncIterator[VoiceAgentEvent]:
     """
     Transform stream: Audio (Bytes) → Voice Events (VoiceAgentEvent)
     """
-    print("[System] Initializing STT Model (Whisper)...")
+    logger.info("[System] Initializing STT Model (Whisper)...")
     # stt = WhisperPytorchSTT(
     #         model_size="large-v3-turbo",
     #         sample_rate=16000,          # <= IMPORTANT: use the WAV's SR (likely 24000)
@@ -224,23 +93,23 @@ async def _stt_stream(
         device = "cpu",
         compute_type = "int8",
     )
-    print("[System] STT Model Ready.")
+    logger.info("[System] STT Model Ready.")
 
     async def send_audio():
         """
-        Background task that pumps audio chunks to AssemblyAI.
+        Background task that pumps audio chunks to the STT model.
 
         This runs concurrently with the main coroutine, continuously reading
-        audio chunks from the input stream and forwarding them to AssemblyAI.
+        audio chunks from the input stream and forwarding them to the STT.
         When the input stream ends, it signals completion by closing the
         WebSocket connection.
         """
         try:
-            # Stream each audio chunk to AssemblyAI as it arrives
+            # Stream each audio chunk to the STT as it arrives
             async for audio_chunk in audio_stream:
                 await stt.send_audio(audio_chunk)
         finally:
-            # Signal to AssemblyAI that audio streaming is complete
+            # Signal that audio streaming is complete
             await stt.close()
 
     # Launch the audio sending task in the background
@@ -249,8 +118,8 @@ async def _stt_stream(
 
     try:
         # Consumer loop: receive and yield transcription events as they arrive
-        # from AssemblyAI. The receive_events() method listens on the WebSocket
-        # for transcript events and yields them as they become available.
+        # from the STT model. The receive_events() method yields transcripts
+        # as they become available.
         async for event in stt.receive_events():
             yield event
     finally:
@@ -276,7 +145,7 @@ def make_agent_stream(agent_executor):
             yield event
 
             if event.type == "stt_output":
-                print(f"DEBUG: [1] STT Output received: {event.transcript}") 
+                logger.debug(f"[1] STT Output received: {event.transcript}") 
                 # Invoke LangChain Agent
                 stream = agent_executor.astream(
                     {"messages": [HumanMessage(content=event.transcript)]},
@@ -284,7 +153,7 @@ def make_agent_stream(agent_executor):
                     stream_mode="messages",
                 )
 
-                print("DEBUG: [2] Starting agent stream...")
+                logger.debug("[2] Starting agent stream...")
                 full_response = ""  # Accumulate full response for debugging
                 
                 async for message, metadata in stream:
@@ -305,7 +174,7 @@ def make_agent_stream(agent_executor):
                         
                         if isinstance(content, str) and content.strip():
                             full_response += content
-                            print(f"DEBUG: [3] AIMessage chunk: '{content}'")
+                            logger.debug(f"[3] AIMessage chunk: '{content}'")
                             yield AgentChunkEvent.create(content)
                         
                         # --- PROCESS TOOL CALLS ---
@@ -326,17 +195,17 @@ def make_agent_stream(agent_executor):
                         )
 
                 # Signal end of turn
-                print(f"DEBUG: [4] Agent stream finished. Full response: '{full_response[:100]}...'")
+                logger.debug(f"[4] Agent stream finished. Full response: '{full_response[:100]}...'")
                 yield AgentEndEvent.create()
-    return _agent_stream
 
+    return _agent_stream
 
 
 async def _tts_stream(
     event_stream: AsyncIterator[VoiceAgentEvent],
 ) -> AsyncIterator[VoiceAgentEvent]:
     
-    print("[System] Initializing TTS Model (Kokoro)...")
+    logger.info("[System] Initializing TTS Model (Kokoro)...")
     # Initialize your TTS (VibeVoice or Kokoro)
     # tts = VibeVoiceAsyncTTS(model_path="/app/models/VibeVoice-Realtime-0.5B")
     # tts = VibeVoiceAsyncTTS(
@@ -351,7 +220,7 @@ async def _tts_stream(
 
     # kokoro tts
     tts = KokoroTTS() 
-    print("[System] TTS Model Ready.")
+    logger.info("[System] TTS Model Ready.")
     
     # # vibe 1.5b
     # tts = VibeVoiceTTS(
@@ -378,7 +247,7 @@ async def _tts_stream(
 
             # handle language switching
             if event.type == "stt_output" and event.language:
-                print(f"[Main] Language detected: {event.language}")
+                logger.info(f"[Main] Language detected: {event.language}")
                 # Map Whisper language to Kokoro language
                 # Whisper: 'en', 'zh', 'ms', 'yue', etc.
                 # Kokoro: 'a'/'b' (English), 'z' (Chinese), 'j' (Japanese), etc.
@@ -394,11 +263,9 @@ async def _tts_stream(
                 if hasattr(tts, 'set_language'):
                     tts.set_language(target_lang)
 
-
-
             # 2. Process Text for TTS
             if event.type == "agent_chunk":
-                print(f"DEBUG: [TTS] Received agent_chunk: {event.text[:30]}...")
+                logger.debug(f"[TTS] Received agent_chunk: {event.text[:30]}...")
                 text_buffer += event.text
                 
                 # Check if we have a full sentence (ends in . ? ! followed by space or newline)
@@ -412,7 +279,7 @@ async def _tts_stream(
                         
                         # Send the complete sentence to TTS
                         if sentence.strip():
-                            print(f"DEBUG: [TTS] Sending sentence to TTS: {sentence[:50]}...")
+                            logger.debug(f"[TTS] Sending sentence to TTS: {sentence[:50]}...")
                             await tts.send_text(sentence)
                         
                         # Remove processed sentence from buffer
@@ -423,7 +290,7 @@ async def _tts_stream(
             
             # 3. Flush remaining text when agent is done
             elif event.type == "agent_end":
-                print(f"DEBUG: [TTS] Agent end, flushing buffer: {text_buffer[:30] if text_buffer else 'empty'}...")
+                logger.debug(f"[TTS] Agent end, flushing buffer: {text_buffer[:30] if text_buffer else 'empty'}...")
                 if text_buffer.strip():
                     await tts.send_text(text_buffer)
                 text_buffer = "" # Reset for next turn
@@ -435,15 +302,12 @@ async def _tts_stream(
     finally:
         await tts.close()
 
-
 # pipeline = (
 #    RunnableGenerator(_stt_stream)  # Audio -> STT events
 #    | RunnableGenerator(_agent_stream)  # STT events -> STT + Agent events
 #    | RunnableGenerator(_tts_stream)  # STT + Agent events -> All events
 # )
 
-
-from starlette.websockets import WebSocketDisconnect
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
@@ -499,7 +363,7 @@ async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
     except Exception as e:
         logger.error(f"Session error: {e}")
     finally:
-        logger.info("✓ Session cleanup complete")
+        logger.info("Session cleanup complete")
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
