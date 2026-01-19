@@ -1,6 +1,7 @@
 # Security: NEVER commit these
 *.pem
 .env
+.venv
 secrets/
 
 # Docker / Build artifacts
