@@ -302,12 +302,6 @@ async def _tts_stream(
     finally:
         await tts.close()
 
-# pipeline = (
-#    RunnableGenerator(_stt_stream)  # Audio -> STT events
-#    | RunnableGenerator(_agent_stream)  # STT events -> STT + Agent events
-#    | RunnableGenerator(_tts_stream)  # STT + Agent events -> All events
-# )
-
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
