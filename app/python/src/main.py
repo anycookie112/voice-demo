@@ -17,8 +17,12 @@ from starlette.staticfiles import StaticFiles
 import re 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("VoiceSandwich")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("VoiceAgent")
 
 from events import (
     AgentChunkEvent,
