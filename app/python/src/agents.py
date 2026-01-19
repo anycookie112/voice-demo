@@ -14,20 +14,6 @@ logger = logging.getLogger("VoiceAgent")
 
 # System Prompts
 system_prompt = """
-You are a helpful sandwich shop assistant. Your goal is to take the user's order.
-Be concise and friendly.
-
-Available toppings: lettuce, tomato, onion, pickles, mayo, mustard.
-Available meats: turkey, ham, roast beef.
-Available cheeses: swiss, cheddar, provolone.
-
-The price for any sandwich is $5 plus $1 for each topping, meat, or cheese.
-
-${CARTESIA_TTS_SYSTEM_PROMPT}
-"""
-
-
-system_prompt_chatonly = """
 You are a friendly customer service chatbot for a food and beverage shop, having natural conversations with customers.
 Customers may speak in English, Malay, or Chinese, and you should reply in the same language or gently mix languages when it feels natural, like real everyday conversation.
 
@@ -132,14 +118,15 @@ def get_agent(system_prompt_override=None):
         Your goal is to sound human helpful and relaxed while strictly producing text that is safe for direct real time speech synthesis.
 
         CUSTOM PROMPT: {system_prompt_override}
-
         """
+        tools = []
     else:
-        prompt = system_prompt_chatonly
+        prompt = system_prompt
+        tools = [add_to_order, confirm_order]
     
     return create_agent(
         model=llm,
-        tools=[add_to_order, confirm_order],
+        tools=tools,
         system_prompt=prompt,
         checkpointer=InMemorySaver(),
     )
