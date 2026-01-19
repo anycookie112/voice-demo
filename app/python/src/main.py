@@ -20,7 +20,6 @@ import re
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("VoiceSandwich")
 
-# from assemblyai_stt import AssemblyAISTT
 # from components.python.src.cartesia_tts import CartesiaTTS
 from events import (
     AgentChunkEvent,
@@ -228,19 +227,19 @@ async def _stt_stream(
 
     async def send_audio():
         """
-        Background task that pumps audio chunks to AssemblyAI.
+        Background task that pumps audio chunks to the STT model.
 
         This runs concurrently with the main coroutine, continuously reading
-        audio chunks from the input stream and forwarding them to AssemblyAI.
+        audio chunks from the input stream and forwarding them to the STT.
         When the input stream ends, it signals completion by closing the
         WebSocket connection.
         """
         try:
-            # Stream each audio chunk to AssemblyAI as it arrives
+            # Stream each audio chunk to the STT as it arrives
             async for audio_chunk in audio_stream:
                 await stt.send_audio(audio_chunk)
         finally:
-            # Signal to AssemblyAI that audio streaming is complete
+            # Signal that audio streaming is complete
             await stt.close()
 
     # Launch the audio sending task in the background
@@ -249,8 +248,8 @@ async def _stt_stream(
 
     try:
         # Consumer loop: receive and yield transcription events as they arrive
-        # from AssemblyAI. The receive_events() method listens on the WebSocket
-        # for transcript events and yields them as they become available.
+        # from the STT model. The receive_events() method yields transcripts
+        # as they become available.
         async for event in stt.receive_events():
             yield event
     finally:
