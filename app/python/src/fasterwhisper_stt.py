@@ -28,6 +28,18 @@ class LocalWhisperSTT:
         sample_rate: int = 16000,
         device: str = "cuda",
         compute_type: str = "float16",
+
+        
+        beam_size: int = 5, # increase for higher accuracy up to 5
+        task: str = "transcribe", 
+        # best_of: int = 2,
+        patience: Optional[float] = 1, # how long the model will keep searching after getting a result.
+        language: Optional[str] = "en",
+        log_progress: bool = True,
+        vad_filter: bool = True,
+        vad_parameters: Optional[dict] = dict(min_silence_duration_ms=800),
+
+
         
         # === NOISE/SILENCE DETECTION ===
         # Base threshold - will be adaptive
@@ -93,6 +105,16 @@ class LocalWhisperSTT:
         self._audio_queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
         self._close_signal = asyncio.Event()
         
+        # Transcribe setting
+        self.language = language
+        self.beam_size = beam_size
+        self.task = task
+        self.patience = patience
+        self.log_progress = log_progress
+        self.vad_filter = vad_filter
+        self.vad_parameters = vad_parameters
+        
+
         # Load Whisper model
         logger.info(f"Loading Whisper model '{model_size}' on {self.device}...")
         self._model = WhisperModel(
@@ -346,16 +368,14 @@ class LocalWhisperSTT:
         try:
             segments, info = self._model.transcribe(
                 audio,
-                beam_size=1,
-                task = "transcribe",
+                beam_size=self.beam_size,
+                task = self.task,
                 best_of = 2,
-                language = "en",
+                language = self.language,
                 without_timestamps=True,
-                # initial_prompt="English, Malay, Mandarin, Cantonese",
-                log_progress = True,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=800),
-
+                log_progress = self.log_progress,
+                vad_filter=self.vad_filter,
+                vad_parameters=self.vad_parameters,
 
             )
             
