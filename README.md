@@ -43,24 +43,8 @@ openssl req -x509 -newkey rsa:4096 -nodes \
 ## Build Docker Image
 docker build -t voice-demo .
 
-## Build Web Frontend
-cd voice-sandwich-demo/components/web
-pnpm install --no-strict-peer-dependencies
-pnpm build
-
-
 
 ## Run the Container
-docker run --gpus all -it \
-  -p 8000:8000 \
-  -w /app/voice-sandwich-demo/components/python \
-  -e GROQ_API_KEY="YOUR_GROQ_API_KEY" \
-  -e LLM_PROVIDER="groq" \
-  -v $(pwd)/cert.pem:/app/cert.pem \
-  -v $(pwd)/key.pem:/app/key.pem \
-  -v /home/robust/models:/home/robust/models \
-  -v $(pwd)/voice-sandwich-demo/components/python/src:/app/voice-sandwich-demo/components/python/src \
-  -v /home/robust/voice_demo_docket/voice-demo/VibeVoice/demo/voices:/app/voice-demo/VibeVoice/demo/voices \
-  voice-demo
+docker compose up
 
 
