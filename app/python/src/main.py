@@ -112,10 +112,10 @@ ${CARTESIA_TTS_SYSTEM_PROMPT}
 provider = os.getenv("LLM_PROVIDER", "groq").lower()
 
 if provider == "ollama":
-    print("--> Using LLM Provider: Ollama")
+    logger.info("--> Using LLM Provider: Ollama")
     llm = get_ollama_model()
 else:
-    print("--> Using LLM Provider: Groq")
+    logger.info("--> Using LLM Provider: Groq")
     # 2. Get Key from Environment (Don't hardcode "gsk_...")
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -196,7 +196,7 @@ async def _stt_stream(
     """
     Transform stream: Audio (Bytes) → Voice Events (VoiceAgentEvent)
     """
-    print("[System] Initializing STT Model (Whisper)...")
+    logger.info("[System] Initializing STT Model (Whisper)...")
     # stt = WhisperPytorchSTT(
     #         model_size="large-v3-turbo",
     #         sample_rate=16000,          # <= IMPORTANT: use the WAV's SR (likely 24000)
@@ -222,7 +222,7 @@ async def _stt_stream(
         device = "cpu",
         compute_type = "int8",
     )
-    print("[System] STT Model Ready.")
+    logger.info("[System] STT Model Ready.")
 
     async def send_audio():
         """
@@ -274,7 +274,7 @@ def make_agent_stream(agent_executor):
             yield event
 
             if event.type == "stt_output":
-                print(f"DEBUG: [1] STT Output received: {event.transcript}") 
+                logger.debug(f"[1] STT Output received: {event.transcript}") 
                 # Invoke LangChain Agent
                 stream = agent_executor.astream(
                     {"messages": [HumanMessage(content=event.transcript)]},
@@ -282,7 +282,7 @@ def make_agent_stream(agent_executor):
                     stream_mode="messages",
                 )
 
-                print("DEBUG: [2] Starting agent stream...")
+                logger.debug("[2] Starting agent stream...")
                 full_response = ""  # Accumulate full response for debugging
                 
                 async for message, metadata in stream:
@@ -303,7 +303,7 @@ def make_agent_stream(agent_executor):
                         
                         if isinstance(content, str) and content.strip():
                             full_response += content
-                            print(f"DEBUG: [3] AIMessage chunk: '{content}'")
+                            logger.debug(f"[3] AIMessage chunk: '{content}'")
                             yield AgentChunkEvent.create(content)
                         
                         # --- PROCESS TOOL CALLS ---
@@ -324,7 +324,7 @@ def make_agent_stream(agent_executor):
                         )
 
                 # Signal end of turn
-                print(f"DEBUG: [4] Agent stream finished. Full response: '{full_response[:100]}...'")
+                logger.debug(f"[4] Agent stream finished. Full response: '{full_response[:100]}...'")
                 yield AgentEndEvent.create()
     return _agent_stream
 
@@ -334,7 +334,7 @@ async def _tts_stream(
     event_stream: AsyncIterator[VoiceAgentEvent],
 ) -> AsyncIterator[VoiceAgentEvent]:
     
-    print("[System] Initializing TTS Model (Kokoro)...")
+    logger.info("[System] Initializing TTS Model (Kokoro)...")
     # Initialize your TTS (VibeVoice or Kokoro)
     # tts = VibeVoiceAsyncTTS(model_path="/app/models/VibeVoice-Realtime-0.5B")
     # tts = VibeVoiceAsyncTTS(
@@ -349,7 +349,7 @@ async def _tts_stream(
 
     # kokoro tts
     tts = KokoroTTS() 
-    print("[System] TTS Model Ready.")
+    logger.info("[System] TTS Model Ready.")
     
     # # vibe 1.5b
     # tts = VibeVoiceTTS(
@@ -376,7 +376,7 @@ async def _tts_stream(
 
             # handle language switching
             if event.type == "stt_output" and event.language:
-                print(f"[Main] Language detected: {event.language}")
+                logger.info(f"[Main] Language detected: {event.language}")
                 # Map Whisper language to Kokoro language
                 # Whisper: 'en', 'zh', 'ms', 'yue', etc.
                 # Kokoro: 'a'/'b' (English), 'z' (Chinese), 'j' (Japanese), etc.
@@ -396,7 +396,7 @@ async def _tts_stream(
 
             # 2. Process Text for TTS
             if event.type == "agent_chunk":
-                print(f"DEBUG: [TTS] Received agent_chunk: {event.text[:30]}...")
+                logger.debug(f"[TTS] Received agent_chunk: {event.text[:30]}...")
                 text_buffer += event.text
                 
                 # Check if we have a full sentence (ends in . ? ! followed by space or newline)
@@ -410,7 +410,7 @@ async def _tts_stream(
                         
                         # Send the complete sentence to TTS
                         if sentence.strip():
-                            print(f"DEBUG: [TTS] Sending sentence to TTS: {sentence[:50]}...")
+                            logger.debug(f"[TTS] Sending sentence to TTS: {sentence[:50]}...")
                             await tts.send_text(sentence)
                         
                         # Remove processed sentence from buffer
@@ -421,7 +421,7 @@ async def _tts_stream(
             
             # 3. Flush remaining text when agent is done
             elif event.type == "agent_end":
-                print(f"DEBUG: [TTS] Agent end, flushing buffer: {text_buffer[:30] if text_buffer else 'empty'}...")
+                logger.debug(f"[TTS] Agent end, flushing buffer: {text_buffer[:30] if text_buffer else 'empty'}...")
                 if text_buffer.strip():
                     await tts.send_text(text_buffer)
                 text_buffer = "" # Reset for next turn
