@@ -118,14 +118,15 @@ def get_agent(system_prompt_override=None):
         Your goal is to sound human helpful and relaxed while strictly producing text that is safe for direct real time speech synthesis.
 
         CUSTOM PROMPT: {system_prompt_override}
-
         """
+        tools = []
     else:
         prompt = system_prompt
+        tools = [add_to_order, confirm_order]
     
     return create_agent(
         model=llm,
-        tools=[add_to_order, confirm_order],
+        tools=tools,
         system_prompt=prompt,
         checkpointer=InMemorySaver(),
     )
