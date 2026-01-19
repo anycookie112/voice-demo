@@ -497,7 +497,7 @@ async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
     except Exception as e:
         logger.error(f"Session error: {e}")
     finally:
-        logger.info("✓ Session cleanup complete")
+        logger.info("Session cleanup complete")
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

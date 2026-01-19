@@ -125,7 +125,7 @@ class LocalWhisperSTT:
         # Track continuous speech duration
         speech_chunks_count = 0
         
-        logger.info("🎤 Improved STT listening... (Calibrating noise floor)")
+        logger.info("Improved STT listening... (Calibrating noise floor)")
         
         while not self._close_signal.is_set():
             try:
@@ -149,7 +149,7 @@ class LocalWhisperSTT:
                 if calibration_duration >= self.noise_calibration_duration:
                     self._calibrate_noise_floor(bytes(self.calibration_buffer))
                     self.calibration_buffer.clear()
-                    logger.info("✓ Noise floor calibrated. Ready for speech.")
+                    logger.info("Noise floor calibrated. Ready for speech.")
                 continue
             
             # === MAIN PROCESSING ===
@@ -176,7 +176,7 @@ class LocalWhisperSTT:
                     speech_start_time = current_time
                     has_speech = True
                     speech_chunks_count = 0
-                    logger.debug("🗣️  Speech started")
+                    logger.debug("Speech started")
                 
                 speech_chunks_count += 1
                 last_speech_time = current_time
@@ -187,7 +187,7 @@ class LocalWhisperSTT:
                 if has_speech and silence_start_time is None:
                     # Transition: Speech -> Silence
                     silence_start_time = current_time
-                    logger.debug("🤫 Silence after speech")
+                    logger.debug("Silence after speech")
             
             # === TRANSCRIPTION TRIGGERS ===
             buffer_duration = len(buffer) / self.bytes_per_second
@@ -229,7 +229,7 @@ class LocalWhisperSTT:
                     silence_start_time = None
                     continue
                 
-                logger.info(f"📝 Transcribing ({transcribe_reason}): {speech_duration:.2f}s speech, {silence_duration:.2f}s silence")
+                logger.info(f"Transcribing ({transcribe_reason}): {speech_duration:.2f}s speech, {silence_duration:.2f}s silence")
                 
                 pcm_data = bytes(buffer)
                 
@@ -284,7 +284,7 @@ class LocalWhisperSTT:
             noise_level = np.percentile(rms_values, 90)
             # Set threshold at 2.5x the noise floor
             self.adaptive_threshold = max(noise_level * 2.5, self.base_silence_threshold)
-            logger.info(f"📊 Noise floor: {noise_level:.1f}, Threshold: {self.adaptive_threshold:.1f}")
+            logger.info(f"Noise floor: {noise_level:.1f}, Threshold: {self.adaptive_threshold:.1f}")
         
         # Store noise profile for spectral reduction if enabled
         if self.use_noise_reduction:
@@ -419,12 +419,12 @@ class LocalWhisperSTT:
             filtered_text = self._filter_hallucinations(raw_text)
             
             if filtered_text:
-                logger.info(f"✓ [{info.language}] {filtered_text}")
+                logger.info(f"[{info.language}] {filtered_text}")
             
             return filtered_text, info.language
             
         except Exception as e:
-            logger.error(f"❌ Transcription error: {e}")
+            logger.error(f"Transcription error: {e}")
             return "", ""
     
     def _filter_hallucinations(self, text: str) -> str:
