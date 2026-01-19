@@ -47,8 +47,11 @@ WORKDIR /workspace
 RUN pip3 install --break-system-packages faster-whisper
 RUN pip3 install --break-system-packages accelerate
 # RUN pip3 install --break-system-packages dotenv
-# 7. Runtime Env (Ensure system sees the new libs)
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+# 7. Runtime Env - CRITICAL: Remove system cuDNN to force PyTorch to use its bundled version
+# PyTorch bundles cuDNN 9.13.0, but the base image has 9.12.0 which causes conflicts
+RUN rm -f /usr/lib/aarch64-linux-gnu/libcudnn* /usr/lib/x86_64-linux-gnu/libcudnn* 2>/dev/null || true
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/lib:$LD_LIBRARY_PATH
 
 RUN pip3 install --break-system-packages spacy
 RUN apt-get update && apt-get install -y libsndfile1

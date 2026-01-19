@@ -2,6 +2,13 @@ import re
 import asyncio
 import contextlib
 import logging
+import os
+# CRITICAL: Import torch first to ensure bundled cuDNN is loaded before CTranslate2
+try:
+    import torch
+except ImportError:
+    pass
+
 from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
@@ -90,8 +97,8 @@ async def _stt_stream(
         end_of_turn_silence=0.5,
         min_speech_duration=0.8,
         use_noise_reduction=False,  
-        device = "cpu",
-        compute_type = "int8",
+        # device = "cpu",
+        # compute_type = "int8",
     )
     logger.info("[System] STT Model Ready.")
 

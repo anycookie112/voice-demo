@@ -37,7 +37,11 @@ class LocalWhisperSTT:
         language: Optional[str] = "en",
         log_progress: bool = True,
         vad_filter: bool = True,
-        vad_parameters: Optional[dict] = dict(min_silence_duration_ms=800),
+        vad_parameters: Optional[dict] = dict(
+            min_silence_duration_ms=500,
+            threshold=0.5,  # Higher = more aggressive noise filtering (0.0-1.0)
+            min_speech_duration_ms=300,  # Minimum speech to consider valid
+        ),
 
 
         
@@ -387,61 +391,8 @@ class LocalWhisperSTT:
             text = " ".join([segment.text for segment in segments])
             text = self._filter_hallucinations(text)
             
-            return text, info.language
-            
-        except Exception as e:
-            logger.error(f"Transcription error: {e}")
-            return "", ""
-        
-        # Apply noise reduction if enabled
-        if self.use_noise_reduction and self.noise_profile is not None:
-            try:
-                audio = self.nr.reduce_noise(
-                    y=audio,
-                    sr=self.sample_rate,
-                    y_noise=self.noise_profile,
-                    stationary=True,
-                )
-            except Exception as e:
-                logger.warning(f"Noise reduction failed: {e}")
-        
-        try:
-            segments, info = self._model.transcribe(
-                audio,
-                beam_size=5,  # Increased for better quality
-                without_timestamps=True,
-                condition_on_previous_text=False,
-                initial_prompt="English, Malay, Mandarin, Cantonese.",
-                vad_filter=True,
-                vad_parameters=dict(
-                    min_silence_duration_ms=500,
-                    threshold=0.5,
-                    min_speech_duration_ms=250,
-                ),
-                # Language detection
-                language=None,  # Auto-detect
-            )
-            
-            # Filter by allowed languages
-            allowed_langs = {'en', 'ms', 'zh', 'yue'}
-            if info.language not in allowed_langs:
-                logger.debug(f"⏭️  Ignored language: {info.language} ({info.language_probability:.2f})")
-                return "", ""
-            
-            # Combine segments
-            texts = [s.text.strip() for s in segments if s.text.strip()]
-            if not texts:
-                return "", ""
-            
-            raw_text = " ".join(texts)
-            
-            # Filter hallucinations and noise
-            filtered_text = self._filter_hallucinations(raw_text)
-            
-            if filtered_text:
-                logger.info(f"[{info.language}] {filtered_text}")
-            
-            return filtered_text, info.language
+            # Return the configured language, not the detected one
+            return text, self.language or info.language
             
         except Exception as e:
             logger.error(f"Transcription error: {e}")
@@ -465,17 +416,27 @@ class LocalWhisperSTT:
             "a", "i", "1", "2",
             # Breathing sounds transcribed as words
             "huh", "uh", "um", "hmm", "mhm",
+            # Common noise hallucinations
+            "oh", "ah", "eh", "okay", "ok",
         }
         
         if clean.lower() in blocklist:
             return ""
         
         # Block if too short (likely noise)
-        if len(clean) < 3:
+        if len(clean) < 5:
+            return ""
+        
+        # Block repeated characters: "kkkkk", "aaaa", "LOLOL"
+        if re.search(r'(.)\1{3,}', clean):
+            return ""
+        
+        # Block repeated syllables: "no no no", "la la la", "k-k-k-k"
+        if re.search(r'\b(\w{1,3})[-\s]*(\1[-\s]*){2,}', clean, re.IGNORECASE):
             return ""
         
         # Block repeated words: "word word word"
-        if re.search(r'\b(\w+)( \1){2,}', clean, re.IGNORECASE):
+        if re.search(r'\b(\w+)(\s+\1){2,}', clean, re.IGNORECASE):
             return ""
         
         # Block if all punctuation/numbers (no letters)
@@ -484,6 +445,14 @@ class LocalWhisperSTT:
         
         # Block excessive punctuation
         if clean.count('.') > 5 or clean.count(',') > 8:
+            return ""
+        
+        # Block if mostly hyphens or dashes (like "k-k-k-k-k")
+        if clean.count('-') > len(clean) // 3:
+            return ""
+        
+        # Block nonsense patterns like "LOLOLOLOL"
+        if re.search(r'([A-Z]{2,3})\1{2,}', clean):
             return ""
         
         return clean

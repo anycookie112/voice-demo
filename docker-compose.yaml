@@ -1,0 +1,25 @@
+services:
+  voice-demo:
+    image: voice-demo
+    build: .
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # CRITICAL Force PyTorch bundled libs to load first
+      LD_LIBRARY_PATH: "/usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/lib:/usr/lib/aarch64-linux-gnu:/usr/lib/x86_64-linux-gnu"
+      LLM_PROVIDER: groq
+    volumes:
+      - ./cert.pem:/app/cert.pem
+      - ./key.pem:/app/key.pem
+      - ./app/python:/app/app/python
+      - /home/robust/models:/home/robust/models
+      - ./VibeVoice/demo/voices:/app/VibeVoice/demo/voices
