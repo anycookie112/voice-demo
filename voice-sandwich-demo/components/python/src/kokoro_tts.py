@@ -108,6 +108,7 @@ class KokoroTTS:
         # Text queue: send_text() pushes here, receive_events() consumes
         self._text_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
         self._close_signal = asyncio.Event()
+        self._interrupt_signal = asyncio.Event()  # For interrupting current TTS playback
 
         # Check global cache
         self._ensure_pipeline(self.lang_code)
@@ -185,6 +186,9 @@ class KokoroTTS:
         """
         from events import TTSEndEvent
         while not self._close_signal.is_set():
+            # Clear interrupt signal at the start of each new synthesis
+            self._interrupt_signal.clear()
+            
             # Wait for next text to synthesize, or break if closed
             try:
                 text = await asyncio.wait_for(self._text_queue.get(), timeout=0.1)
@@ -201,11 +205,21 @@ class KokoroTTS:
                 # You could emit a "turn complete" signal here if your system needs it
                 continue
 
+            # Check for interrupt before starting synthesis
+            if self._interrupt_signal.is_set():
+                print("[Kokoro] Skipping synthesis due to interrupt")
+                continue
+
             # Run Kokoro TTS in a threadpool to avoid blocking the event loop
             loop = asyncio.get_running_loop()
             pcm_bytes = await loop.run_in_executor(
                 None, self._synthesize_to_pcm_bytes, text
             )
+
+            # Check for interrupt after synthesis (before streaming)
+            if self._interrupt_signal.is_set():
+                print("[Kokoro] Discarding synthesized audio due to interrupt")
+                continue
 
             # Stream chunks as TTSChunkEvent, similar to ElevenLabs streaming
             bytes_per_sample = 2  # int16
@@ -213,7 +227,10 @@ class KokoroTTS:
             bytes_per_chunk = samples_per_chunk * bytes_per_sample
 
             for i in range(0, len(pcm_bytes), bytes_per_chunk):
-                if self._close_signal.is_set():
+                # Check for interrupt during streaming
+                if self._close_signal.is_set() or self._interrupt_signal.is_set():
+                    if self._interrupt_signal.is_set():
+                        print("[Kokoro] Stopping audio stream due to interrupt")
                     break
 
                 chunk = pcm_bytes[i : i + bytes_per_chunk]
@@ -225,9 +242,12 @@ class KokoroTTS:
                 # Optional: simulate "real-time" pacing
                 # await asyncio.sleep(self.chunk_ms / 1000.0)
 
-            # Emit TTSEndEvent after all audio chunks for this turn
-            yield TTSEndEvent.create()
-            print("[DEBUG] Kokoro: Turn complete (TTSEndEvent emitted)")
+            # Only emit TTSEndEvent if we weren't interrupted
+            if not self._interrupt_signal.is_set():
+                yield TTSEndEvent.create()
+                print("[DEBUG] Kokoro: Turn complete (TTSEndEvent emitted)")
+            else:
+                print("[Kokoro] Turn interrupted - no TTSEndEvent emitted")
 
     async def close(self) -> None:
         """
@@ -237,6 +257,20 @@ class KokoroTTS:
         # Put a sentinel to unblock any pending queue get()
         with contextlib.suppress(asyncio.QueueFull):
             await self._text_queue.put(None)
+
+    def interrupt(self) -> None:
+        """
+        Interrupt current TTS playback immediately.
+        Called when user starts speaking during TTS output.
+        """
+        print("[Kokoro] Interrupt signal received - stopping current playback")
+        self._interrupt_signal.set()
+        # Clear any pending text in the queue
+        while not self._text_queue.empty():
+            try:
+                self._text_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     # -------------------------------------------------------------------------
     # Internal helpers

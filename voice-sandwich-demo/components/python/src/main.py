@@ -220,9 +220,9 @@ async def _stt_stream(
         end_of_speech_silence=1.0,
         end_of_turn_silence=0.5,
         min_speech_duration=0.8,
-        use_noise_reduction=False,  # Set True if very noisy
-        device = "cpu",
-        compute_type = "int8",
+        use_noise_reduction=False,  
+        # device = "cpu",
+        # compute_type = "int8",
     )
     print("[System] STT Model Ready.")
 

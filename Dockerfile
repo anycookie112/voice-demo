@@ -68,14 +68,14 @@ COPY voice-sandwich-demo/components/python/requirements.txt .
 RUN grep -v "ctranslate2" requirements.txt > req_safe.txt && \
     pip3 install --break-system-packages -r req_safe.txt
 
-# 1. Copy everything (creates /app/voice-demo/voice-sandwich-demo)
+# 1. Copy everything (creates /app/voice-sandwich-demo, /app/VibeVoice, etc.)
 COPY . .
 
-# 2. Update PYTHONPATH to include the extra 'voice-demo' folder
-ENV PYTHONPATH="/app/voice-demo/voice-sandwich-demo/components/python/src:/app/VibeVoice:/app"
+# 2. Update PYTHONPATH
+ENV PYTHONPATH="/app/voice-sandwich-demo/components/python/src:/app/VibeVoice:/app"
 
-# 3. Update WORKDIR to include the extra 'voice-demo' folder
-WORKDIR /app/voice-demo/voice-sandwich-demo/components/python
+# 3. Update WORKDIR
+WORKDIR /app/voice-sandwich-demo/components/python
 
 CMD ["python3", "src/main.py"]
 
