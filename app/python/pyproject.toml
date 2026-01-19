@@ -49,10 +49,7 @@ torchvision = { index = "pytorch-cu130" }
 # FlashAttention prebuilt wheel
 flash-attn = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.6.4/flash_attn-2.8.3+cu130torch2.9-cp311-cp311-linux_aarch64.whl" }
 
-[project.optional-dependencies]
-assemblyai = ["assemblyai"]
-elevenlabs = ["elevenlabs"]
-anthropic = ["langchain-anthropic"]
+
 
 [dependency-groups]
 dev = [

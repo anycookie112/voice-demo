@@ -83,20 +83,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/9c/36c5c37947ebfb8c7f22e0eb6e4d188ee2d53aa3880f3f2744fb894f0cb1/anyio-4.12.0-py3-none-any.whl", hash = "sha256:dad2376a628f98eeca4881fc56cd06affd18f659b17a747d3ff0307ced94b1bb", size = 113362, upload-time = "2025-11-28T23:36:57.897Z" },
 ]
 
-[[package]]
-name = "assemblyai"
-version = "0.48.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "typing-extensions" },
-    { name = "websockets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/82/19/57ee0680d8afaa1d354833a35b8ff4ab4cd946734fa3876bedae8cc6ab08/assemblyai-0.48.4.tar.gz", hash = "sha256:a7ec007b6d3079d38a4a5c39ea7c733067785e1a30151a6f01aef7728c1bb659", size = 56367, upload-time = "2025-12-17T22:37:42.135Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ae/e3/a21e7fe81e056930ca0b6fd9ddfd1713322560762f8662605e493619da49/assemblyai-0.48.4-py3-none-any.whl", hash = "sha256:cf56b71f205e341b650cb2668e382181c01082b95873bea4dc7450fe1647083d", size = 52376, upload-time = "2025-12-17T22:37:40.97Z" },
-]
 
 [[package]]
 name = "attrs"
@@ -1726,12 +1712,7 @@ dependencies = [
 anthropic = [
     { name = "langchain-anthropic" },
 ]
-assemblyai = [
-    { name = "assemblyai" },
-]
-elevenlabs = [
-    { name = "elevenlabs" },
-]
+
 
 [package.dev-dependencies]
 dev = [
@@ -1742,7 +1723,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.12.0" },
-    { name = "assemblyai", marker = "extra == 'assemblyai'" },
     { name = "cn2an", specifier = ">=0.5.23" },
     { name = "diffusers", specifier = ">=0.36.0" },
     { name = "elevenlabs", marker = "extra == 'elevenlabs'" },
@@ -1774,7 +1754,6 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "websockets" },
 ]
-provides-extras = ["assemblyai", "elevenlabs", "anthropic"]
 
 [package.metadata.requires-dev]
 dev = [
