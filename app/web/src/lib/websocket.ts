@@ -19,6 +19,7 @@ export function createVoiceSession(): VoiceSession {
   let ws: WebSocket | null = null;
   let ttsFinishTimeout: ReturnType<typeof setTimeout> | null = null;
   let activeMarkdownActivityId: string | null = null;
+  let activeTtsActivityId: string | null = null;
 
   const audioCapture = createAudioCapture();
   const audioPlayback = createAudioPlayback();
@@ -36,6 +37,7 @@ export function createVoiceSession(): VoiceSession {
           }
           currentTurn.startTurn(event.ts);
           activeMarkdownActivityId = null; // Reset for new turn
+          activeTtsActivityId = null;
         }
         currentTurn.sttStart(event.ts);
         currentTurn.sttChunk(event.transcript);
@@ -57,13 +59,23 @@ export function createVoiceSession(): VoiceSession {
         if (activeMarkdownActivityId) {
           activities.appendToId(activeMarkdownActivityId, event.text);
         } else {
-          activeMarkdownActivityId = activities.add("markdown", "Agent Response", event.text);
+          activeMarkdownActivityId = activities.add("markdown", "Agent Response (Visual)", event.text);
+        }
+        break;
+      }
+
+      case "tts_text": {
+        if (activeTtsActivityId) {
+          activities.appendToId(activeTtsActivityId, event.text);
+        } else {
+          activeTtsActivityId = activities.add("tts", "Agent Response (Audio)", event.text);
         }
         break;
       }
 
       case "agent_end": {
-        activeMarkdownActivityId = null; 
+        activeMarkdownActivityId = null;
+        activeTtsActivityId = null;
         const currentTurnState = get(currentTurn);
         
         if (currentTurnState.response) {
@@ -178,6 +190,7 @@ export function createVoiceSession(): VoiceSession {
     waterfallData.set(null);
     activities.clear();
     activeMarkdownActivityId = null;
+    activeTtsActivityId = null;
     logs.clear();
     audioPlayback.stop();
 

@@ -3,6 +3,8 @@
   import { formatTime } from '../utils';
   import Markdown from './Markdown.svelte';
 
+  let showTts = $state(false);
+
   const iconMap: Record<string, string> = {
     stt: '🎤',
     agent: '🤖',
@@ -18,24 +20,36 @@
     tool: { bg: 'bg-blue-500/10', label: 'text-blue-500' },
     markdown: { bg: 'bg-green-500/10', label: 'text-green-500' },
   };
+
+  const filteredActivities = $derived(
+    $activities.filter(item => showTts || item.type !== 'tts')
+  );
 </script>
 
 <div class="bg-white rounded-2xl p-6 mb-5 border border-gray-200">
   <div class="flex items-center justify-between mb-4">
     <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Activity</span>
-    <button
-      onclick={() => activities.clear()}
-      class="text-[11px] text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
-    >
-      Clear
-    </button>
+    <div class="flex items-center gap-3">
+      <button 
+        onclick={() => showTts = !showTts}
+        class="text-[11px] font-medium px-2 py-1 rounded transition-colors {showTts ? 'bg-orange-100 text-orange-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}"
+      >
+        {showTts ? 'Hide Audio Transcript' : 'Show Audio Transcript'}
+      </button>
+      <button
+        onclick={() => activities.clear()}
+        class="text-[11px] text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
+      >
+        Clear
+      </button>
+    </div>
   </div>
 
   <div class="max-h-80 overflow-y-auto flex flex-col gap-2.5">
-    {#if $activities.length === 0}
+    {#if filteredActivities.length === 0}
       <div class="text-gray-400 text-sm py-5 text-center">No activity yet...</div>
     {:else}
-      {#each $activities as item (item.id)}
+      {#each filteredActivities as item (item.id)}
         <div class="flex items-start gap-3 p-3 bg-gray-100 rounded-xl animate-slideIn">
           <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0 {colorMap[item.type]?.bg}">
             {iconMap[item.type] || '📋'}
@@ -45,7 +59,11 @@
               {item.label}
             </div>
             <div class="text-sm text-gray-900 leading-relaxed break-words">
-              <Markdown content={item.text} />
+              {#if item.type === 'markdown'}
+                <Markdown content={item.text} />
+              {:else}
+                {item.text}
+              {/if}
             </div>
             {#if item.args}
               <pre class="mt-2 p-2 bg-black/5 rounded-md font-mono text-[11px] text-gray-600 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(item.args, null, 2)}</pre>
