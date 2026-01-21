@@ -147,7 +147,7 @@ def make_agent_stream(agent_executor):
     ) -> AsyncIterator[VoiceAgentEvent]:
         """
         Transform stream: STT events → Agent events
-        Parses <MARKDOWN> and <TTS> tags and emits separate events.
+        Streams <MARKDOWN> and <TTS> content in real-time.
         """
         thread_id = str(uuid4())
 
@@ -165,8 +165,11 @@ def make_agent_stream(agent_executor):
                 )
 
                 logger.debug("[2] Starting agent stream...")
-                full_response = ""  # Accumulate full response for parsing
                 
+                # Streaming Parser State
+                buffer = ""
+                active_tag: str | None = None  # "MARKDOWN" or "TTS"
+
                 async for message, metadata in stream:
                     # --- PROCESS AI MESSAGES (TEXT) ---
                     if isinstance(message, AIMessage):
@@ -182,9 +185,75 @@ def make_agent_stream(agent_executor):
                                     text_parts.append(item)
                             content = ''.join(text_parts)
                         
-                        if isinstance(content, str) and content.strip():
-                            full_response += content
-                            logger.debug(f"[3] AIMessage chunk: '{content[:50]}...'")
+                        if isinstance(content, str) and content:
+                            buffer += content
+                            
+                            # State Machine for Tag Parsing
+                            while True:
+                                if active_tag is None:
+                                    # Look for new tags
+                                    m_start = buffer.find("<MARKDOWN>")
+                                    t_start = buffer.find("<TTS>")
+                                    
+                                    # Determine first tag
+                                    if m_start != -1 and (t_start == -1 or m_start < t_start):
+                                        # Switch to MARKDOWN
+                                        buffer = buffer[m_start + 10:] # len("<MARKDOWN>") == 10
+                                        active_tag = "MARKDOWN"
+                                        continue # Re-evaluate buffer in new state
+                                    elif t_start != -1:
+                                        # Switch to TTS
+                                        buffer = buffer[t_start + 5:] # len("<TTS>") == 5
+                                        active_tag = "TTS"
+                                        continue
+                                    else:
+                                        # No start tag found. Keep buffer for next chunk.
+                                        # Only keep tail to avoid unlimited growth if Agent outputs garbage?
+                                        # For now, trust the agent obeys prompt. 
+                                        # Optimization: If buffer is huge and no tag, maybe flush/log?
+                                        break
+                                
+                                else:
+                                    # Inside a tag: Look for closing tag
+                                    end_tag = f"</{active_tag}>"
+                                    end_idx = buffer.find(end_tag)
+                                    
+                                    if end_idx != -1:
+                                        # Found closing tag
+                                        chunk = buffer[:end_idx]
+                                        buffer = buffer[end_idx + len(end_tag):]
+                                        
+                                        if chunk:
+                                            if active_tag == "MARKDOWN":
+                                                yield MarkdownChunkEvent.create(chunk)
+                                            else:
+                                                yield TTSTextEvent.create(chunk)
+                                        
+                                        active_tag = None
+                                        continue # Re-evaluate buffer for next tag
+                                    
+                                    else:
+                                        # No closing tag yet. Yield partial content safely.
+                                        # We must NOT yield partial tags (e.g. "</MARK")
+                                        # Look for the start of a potential closing tag ("<")
+                                        last_open = buffer.rfind("<")
+                                        
+                                        if last_open != -1:
+                                            # Yield up to the last "<"
+                                            to_yield = buffer[:last_open]
+                                            buffer = buffer[last_open:]
+                                        else:
+                                            # Safe to yield everything
+                                            to_yield = buffer
+                                            buffer = ""
+                                            
+                                        if to_yield:
+                                            if active_tag == "MARKDOWN":
+                                                yield MarkdownChunkEvent.create(to_yield)
+                                            else:
+                                                yield TTSTextEvent.create(to_yield)
+                                        break # Need more data
+
                         
                         # --- PROCESS TOOL CALLS ---
                         if hasattr(message, "tool_calls") and message.tool_calls:
@@ -203,18 +272,15 @@ def make_agent_stream(agent_executor):
                             result=str(message.content) if message.content else "",
                         )
 
-                # Parse the complete response for MARKDOWN and TTS sections
-                logger.debug(f"[4] Agent stream finished. Full response length: {len(full_response)}")
-                parsed = parse_agent_response(full_response)
-                
-                # Emit separate events for markdown and TTS content
-                if parsed["markdown"]:
-                    logger.info(f"[5] Emitting MarkdownChunkEvent: {parsed['markdown'][:50]}...")
-                    yield MarkdownChunkEvent.create(parsed["markdown"])
-                
-                if parsed["tts"]:
-                    logger.info(f"[6] Emitting TTSTextEvent: {parsed['tts'][:50]}...")
-                    yield TTSTextEvent.create(parsed["tts"])
+                # Flush any remaining content in buffer after stream ends
+                if buffer and active_tag:
+                     logger.warning(f"Stream ended with unclosed {active_tag} tag. Flushing buffer.")
+                     if active_tag == "MARKDOWN":
+                         yield MarkdownChunkEvent.create(buffer)
+                     else:
+                         yield TTSTextEvent.create(buffer)
+
+                logger.debug("[4] Agent stream finished.")
                 
                 # Signal end of turn
                 yield AgentEndEvent.create()

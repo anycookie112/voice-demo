@@ -15,8 +15,9 @@ function createActivityStore() {
       text: string,
       args?: Record<string, unknown>
     ) {
+      const id = `activity-${++idCounter}`;
       const item: ActivityItem = {
-        id: `activity-${++idCounter}`,
+        id,
         type,
         label,
         text,
@@ -24,6 +25,7 @@ function createActivityStore() {
         timestamp: new Date(),
       };
       update((items) => [item, ...items].slice(0, 50)); // Keep max 50 items
+      return id;
     },
 
     removeLastOfType(type: ActivityItem["type"]) {
@@ -34,6 +36,14 @@ function createActivityStore() {
         }
         return items;
       });
+    },
+
+    appendToId(id: string, text: string) {
+      update((items) => 
+        items.map((item) => 
+          item.id === id ? { ...item, text: item.text + text } : item
+        )
+      );
     },
 
     clear() {

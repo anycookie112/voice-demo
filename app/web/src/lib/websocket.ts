@@ -18,6 +18,7 @@ export interface VoiceSession {
 export function createVoiceSession(): VoiceSession {
   let ws: WebSocket | null = null;
   let ttsFinishTimeout: ReturnType<typeof setTimeout> | null = null;
+  let activeMarkdownActivityId: string | null = null;
 
   const audioCapture = createAudioCapture();
   const audioPlayback = createAudioPlayback();
@@ -34,6 +35,7 @@ export function createVoiceSession(): VoiceSession {
             waterfallData.set({ ...prevTurn });
           }
           currentTurn.startTurn(event.ts);
+          activeMarkdownActivityId = null; // Reset for new turn
         }
         currentTurn.sttStart(event.ts);
         currentTurn.sttChunk(event.transcript);
@@ -52,11 +54,16 @@ export function createVoiceSession(): VoiceSession {
 
       case "markdown_chunk": {
         // Display markdown content in activity feed
-        activities.add("markdown", "Agent Response", event.text);
+        if (activeMarkdownActivityId) {
+          activities.appendToId(activeMarkdownActivityId, event.text);
+        } else {
+          activeMarkdownActivityId = activities.add("markdown", "Agent Response", event.text);
+        }
         break;
       }
 
       case "agent_end": {
+        activeMarkdownActivityId = null; 
         const currentTurnState = get(currentTurn);
         
         if (currentTurnState.response) {
@@ -170,6 +177,7 @@ export function createVoiceSession(): VoiceSession {
     latencyStats.reset();
     waterfallData.set(null);
     activities.clear();
+    activeMarkdownActivityId = null;
     logs.clear();
     audioPlayback.stop();
 
