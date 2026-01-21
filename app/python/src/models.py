@@ -14,7 +14,7 @@ def get_ollama_model():
 
 def get_groq_model(
     api_key: str | None = None,
-    model: str = "openai/gpt-oss-20b",
+    model: str = "openai/gpt-oss-120b",
     temperature: float = 0.0,
     max_tokens: int | None = None,
 ):

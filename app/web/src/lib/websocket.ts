@@ -49,6 +49,13 @@ export function createVoiceSession(): VoiceSession {
         // Do not add to activities here; wait for agent_end
         break;
       }
+
+      case "markdown_chunk": {
+        // Display markdown content in activity feed
+        activities.add("markdown", "Agent Response", event.text);
+        break;
+      }
+
       case "agent_end": {
         const currentTurnState = get(currentTurn);
         

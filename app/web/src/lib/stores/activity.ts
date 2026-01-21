@@ -26,6 +26,16 @@ function createActivityStore() {
       update((items) => [item, ...items].slice(0, 50)); // Keep max 50 items
     },
 
+    removeLastOfType(type: ActivityItem["type"]) {
+      update((items) => {
+        const idx = items.findIndex((item) => item.type === type);
+        if (idx !== -1) {
+          return [...items.slice(0, idx), ...items.slice(idx + 1)];
+        }
+        return items;
+      });
+    },
+
     clear() {
       set([]);
     },

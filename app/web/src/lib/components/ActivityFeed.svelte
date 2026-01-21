@@ -1,12 +1,14 @@
 <script lang="ts">
   import { activities } from '../stores';
   import { formatTime } from '../utils';
+  import Markdown from './Markdown.svelte';
 
   const iconMap: Record<string, string> = {
     stt: '🎤',
     agent: '🤖',
     tts: '🔊',
     tool: '🔧',
+    markdown: '📝',
   };
 
   const colorMap: Record<string, { bg: string; label: string }> = {
@@ -14,6 +16,7 @@
     agent: { bg: 'bg-purple-500/10', label: 'text-purple-500' },
     tts: { bg: 'bg-orange-500/10', label: 'text-orange-500' },
     tool: { bg: 'bg-blue-500/10', label: 'text-blue-500' },
+    markdown: { bg: 'bg-green-500/10', label: 'text-green-500' },
   };
 </script>
 
@@ -41,7 +44,9 @@
             <div class="text-[10px] font-semibold uppercase tracking-wider mb-0.5 {colorMap[item.type]?.label}">
               {item.label}
             </div>
-            <div class="text-sm text-gray-900 leading-relaxed break-words">{item.text}</div>
+            <div class="text-sm text-gray-900 leading-relaxed break-words">
+              <Markdown content={item.text} />
+            </div>
             {#if item.args}
               <pre class="mt-2 p-2 bg-black/5 rounded-md font-mono text-[11px] text-gray-600 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(item.args, null, 2)}</pre>
             {/if}

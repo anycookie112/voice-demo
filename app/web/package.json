@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "build": "^0.1.4",
+    "marked": "^17.0.1",
     "pnpm": "^10.28.0"
   }
 }

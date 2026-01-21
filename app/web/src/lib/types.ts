@@ -4,6 +4,8 @@ export type ServerEvent =
   | { type: "stt_output"; ts: number; transcript: string }
   | { type: "agent_chunk"; ts: number; text: string }
   | { type: "agent_end"; ts: number }
+  | { type: "markdown_chunk"; ts: number; text: string }
+  | { type: "tts_text"; ts: number; text: string }
   | {
       type: "tool_call";
       ts: number;
@@ -52,7 +54,7 @@ export interface LatencyStats {
 // Activity feed item
 export interface ActivityItem {
   id: string;
-  type: "stt" | "agent" | "tts" | "tool";
+  type: "stt" | "agent" | "tts" | "tool" | "markdown";
   label: string;
   text: string;
   args?: Record<string, unknown>;

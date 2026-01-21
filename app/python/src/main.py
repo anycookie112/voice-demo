@@ -37,12 +37,15 @@ from events import (
     VoiceAgentEvent,
     TTSStopEvent,
     LogEvent,
+    MarkdownChunkEvent,
+    TTSTextEvent,
     event_to_dict,
 )
 from utils import merge_async_iters
 from fasterwhisper_stt import LocalWhisperSTT 
 from kokoro_tts import KokoroTTS
 from agents import get_agent
+from response_parser import parse_agent_response
 # from vibevoice_tts import VibeVoiceAsyncTTS
 # from vibevoice_new import VibeVoiceTTS
 
@@ -143,7 +146,8 @@ def make_agent_stream(agent_executor):
         event_stream: AsyncIterator[VoiceAgentEvent],
     ) -> AsyncIterator[VoiceAgentEvent]:
         """
-        FIXED: Uses message.content instead of message.text
+        Transform stream: STT events → Agent events
+        Parses <MARKDOWN> and <TTS> tags and emits separate events.
         """
         thread_id = str(uuid4())
 
@@ -161,7 +165,7 @@ def make_agent_stream(agent_executor):
                 )
 
                 logger.debug("[2] Starting agent stream...")
-                full_response = ""  # Accumulate full response for debugging
+                full_response = ""  # Accumulate full response for parsing
                 
                 async for message, metadata in stream:
                     # --- PROCESS AI MESSAGES (TEXT) ---
@@ -170,7 +174,6 @@ def make_agent_stream(agent_executor):
                         
                         # Handle different content types
                         if isinstance(content, list):
-                            # Sometimes content is a list of dicts with 'text' keys
                             text_parts = []
                             for item in content:
                                 if isinstance(item, dict) and 'text' in item:
@@ -181,8 +184,7 @@ def make_agent_stream(agent_executor):
                         
                         if isinstance(content, str) and content.strip():
                             full_response += content
-                            logger.debug(f"[3] AIMessage chunk: '{content}'")
-                            yield AgentChunkEvent.create(content)
+                            logger.debug(f"[3] AIMessage chunk: '{content[:50]}...'")
                         
                         # --- PROCESS TOOL CALLS ---
                         if hasattr(message, "tool_calls") and message.tool_calls:
@@ -201,8 +203,20 @@ def make_agent_stream(agent_executor):
                             result=str(message.content) if message.content else "",
                         )
 
+                # Parse the complete response for MARKDOWN and TTS sections
+                logger.debug(f"[4] Agent stream finished. Full response length: {len(full_response)}")
+                parsed = parse_agent_response(full_response)
+                
+                # Emit separate events for markdown and TTS content
+                if parsed["markdown"]:
+                    logger.info(f"[5] Emitting MarkdownChunkEvent: {parsed['markdown'][:50]}...")
+                    yield MarkdownChunkEvent.create(parsed["markdown"])
+                
+                if parsed["tts"]:
+                    logger.info(f"[6] Emitting TTSTextEvent: {parsed['tts'][:50]}...")
+                    yield TTSTextEvent.create(parsed["tts"])
+                
                 # Signal end of turn
-                logger.debug(f"[4] Agent stream finished. Full response: '{full_response[:100]}...'")
                 yield AgentEndEvent.create()
 
     return _agent_stream
@@ -270,32 +284,27 @@ async def _tts_stream(
                 if hasattr(tts, 'set_language'):
                     tts.set_language(target_lang)
 
-            # 2. Process Text for TTS
-            if event.type == "agent_chunk":
-                logger.debug(f"[TTS] Received agent_chunk: {event.text[:30]}...")
+            # NEW: Process TTSTextEvent (parsed TTS content from <TTS> tags)
+            if event.type == "tts_text":
+                logger.debug(f"[TTS] Received tts_text: {event.text[:50]}...")
                 text_buffer += event.text
                 
                 # Check if we have a full sentence (ends in . ? ! followed by space or newline)
-                # We split iteratively to handle multiple sentences in one chunk
                 while True:
-                    # Regex: Find punctuation [.?!] followed by whitespace or end of string
                     match = re.search(r'([.?!]+)(\s+|$)', text_buffer)
                     if match:
                         end_idx = match.end()
                         sentence = text_buffer[:end_idx]
                         
-                        # Send the complete sentence to TTS
                         if sentence.strip():
                             logger.debug(f"[TTS] Sending sentence to TTS: {sentence[:50]}...")
                             await tts.send_text(sentence)
                         
-                        # Remove processed sentence from buffer
                         text_buffer = text_buffer[end_idx:]
                     else:
-                        # No end of sentence found yet, keep buffering
                         break
             
-            # 3. Flush remaining text when agent is done
+            # Flush remaining text when agent is done
             elif event.type == "agent_end":
                 logger.debug(f"[TTS] Agent end, flushing buffer: {text_buffer[:30] if text_buffer else 'empty'}...")
                 if text_buffer.strip():
@@ -320,11 +329,13 @@ async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
         logger.info(f"\n{bar}\n{msg}\n{bar}")
         await websocket.send_json(event_to_dict(LogEvent.create(msg)))
     else:
-        msg = "Using Default System Prompt."
+        msg = "Using Default System Prompt (with markdown support)."
         logger.info(msg)
         await websocket.send_json(event_to_dict(LogEvent.create(msg)))
 
-    current_agent = get_agent(system_prompt_override=custom_prompt)
+    # Only pass custom_prompt if it's actually provided
+    # None means use default system_prompt with markdown formatting
+    current_agent = get_agent(system_prompt_override=custom_prompt if custom_prompt else None)
     _agent_stream = make_agent_stream(current_agent)
 
     pipeline = (

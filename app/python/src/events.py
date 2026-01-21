@@ -295,6 +295,36 @@ class TTSStopEvent:
 
 
 @dataclass
+class MarkdownChunkEvent:
+    """
+    Event emitted for markdown content to be displayed on the frontend.
+    This is separate from text sent to TTS.
+    """
+    type: Literal["markdown_chunk"]
+    text: str
+    ts: int
+
+    @classmethod
+    def create(cls, text: str) -> "MarkdownChunkEvent":
+        return cls(type="markdown_chunk", text=text, ts=_now_ms())
+
+
+@dataclass
+class TTSTextEvent:
+    """
+    Event emitted for text that should be spoken by TTS.
+    Contains only speakable plain text, no markdown or symbols.
+    """
+    type: Literal["tts_text"]
+    text: str
+    ts: int
+
+    @classmethod
+    def create(cls, text: str) -> "TTSTextEvent":
+        return cls(type="tts_text", text=text, ts=_now_ms())
+
+
+@dataclass
 class LogEvent:
     """Event for backend-to-frontend logging."""
     type: Literal["log"]
@@ -306,7 +336,7 @@ class LogEvent:
         return cls(type="log", message=message, ts=_now_ms())
 
 # Update VoiceAgentEvent union
-VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent, TTSEndEvent, TTSStopEvent, LogEvent]
+VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent, TTSEndEvent, TTSStopEvent, MarkdownChunkEvent, TTSTextEvent, LogEvent]
 
 
 def event_to_dict(event: VoiceAgentEvent) -> dict:
@@ -359,5 +389,9 @@ def event_to_dict(event: VoiceAgentEvent) -> dict:
         return {"type": event.type, "ts": event.ts}
     elif isinstance(event, TTSStopEvent):
         return {"type": event.type, "ts": event.ts}
+    elif isinstance(event, MarkdownChunkEvent):
+        return {"type": event.type, "text": event.text, "ts": event.ts}
+    elif isinstance(event, TTSTextEvent):
+        return {"type": event.type, "text": event.text, "ts": event.ts}
     else:
         raise ValueError(f"Unknown event type: {type(event)}")
