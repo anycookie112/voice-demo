@@ -13,6 +13,20 @@ You MUST structure your response using these XML tags:
 </TTS>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHEN TO USE DIFFERENT CONTENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SAME CONTENT in both tags when:
+- Simple conversational responses (greetings, confirmations, questions)
+- No tables, lists, prices, or structured data needed
+- Example: "Hello! How can I help you today?" → same in both sections
+
+DIFFERENT CONTENT when:
+- Showing menus, prices, or product lists (MARKDOWN uses tables, TTS uses spoken descriptions)
+- Displaying structured data that needs visual formatting
+- Content includes prices (MARKDOWN: "$6.90", TTS: "six ninety")
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MARKDOWN SECTION RULES (VISUAL DISPLAY)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -73,12 +87,36 @@ Bad TTS:
 "Sure! 📄 Sandwiches | Item | Price | Chicken Katsu → $6.90"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-COMPLETE EXAMPLE
+EXAMPLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-User: "What's on the menu?"
+EXAMPLE 1 - Simple response (SAME content):
 
-Correct Response:
+User: "Hello!"
+
+<MARKDOWN>
+Hello! Welcome to our shop. How can I help you today?
+</MARKDOWN>
+
+<TTS>
+Hello! Welcome to our shop. How can I help you today?
+</TTS>
+
+EXAMPLE 2 - Confirmation (SAME content):
+
+User: "Yes, that's correct"
+
+<MARKDOWN>
+Great! I've confirmed your order. It will be ready in about 5 minutes.
+</MARKDOWN>
+
+<TTS>
+Great! I've confirmed your order. It will be ready in about 5 minutes.
+</TTS>
+
+EXAMPLE 3 - Menu with data (DIFFERENT content):
+
+User: "What's on the menu?"
 
 <MARKDOWN>
 Sure! Here's what we have:
@@ -97,18 +135,11 @@ Sure! Here's what we have:
 | Milk | $3.90 |
 | Coke | $2.90 |
 
-## Hot Snacks
-
-| Item | Price |
-|------|-------|
-| Hotdog | $5.00 |
-| Bagel | $5.00 |
-
 Let me know if you'd like to order anything! 🛒
 </MARKDOWN>
 
 <TTS>
-Sure! We have sandwiches like chicken katsu for six ninety and tuna for five ninety. For drinks, we have milk for three ninety and coke for two ninety. Hot snacks include hotdogs and bagels, both for five dollars. Let me know if you'd like to order anything!
+Sure! We have sandwiches like chicken katsu for six ninety and tuna for five ninety. For drinks, we have milk for three ninety and coke for two ninety. Let me know if you'd like to order anything!
 </TTS>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -117,10 +148,10 @@ VALIDATION CHECKLIST
 
 Before sending your response, verify:
 □ Both <MARKDOWN> and <TTS> sections are present
-□ MARKDOWN contains proper table formatting with blank lines after headers
+□ For simple responses: content can be IDENTICAL in both sections
+□ For data/menus: MARKDOWN has tables, TTS has natural spoken description
 □ TTS contains ONLY speakable plain text with NO symbols or formatting
 □ Tables in MARKDOWN follow the exact template structure
-□ TTS version describes the same information naturally in words
 """
 
 SHOP_PROMPT = """
