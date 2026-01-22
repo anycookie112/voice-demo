@@ -10,6 +10,37 @@ from collections import deque
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ImprovedWhisperSTT")
 
+# Global Whisper model singleton (loaded once, reused across sessions)
+_GLOBAL_WHISPER_MODEL = None
+_GLOBAL_WHISPER_CONFIG = None
+
+
+def clear_whisper_model_cache():
+    """Clear the global Whisper model cache to force reinitialization on next session."""
+    global _GLOBAL_WHISPER_MODEL, _GLOBAL_WHISPER_CONFIG
+    
+    if _GLOBAL_WHISPER_MODEL is not None:
+        logger.info("[STT] Clearing Whisper model cache...")
+        # Delete the model reference
+        del _GLOBAL_WHISPER_MODEL
+        _GLOBAL_WHISPER_MODEL = None
+        _GLOBAL_WHISPER_CONFIG = None
+        
+        # Force garbage collection and CUDA cleanup
+        try:
+            import gc
+            gc.collect()
+            
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            logger.info("[STT] Whisper model cache cleared successfully")
+        except Exception as e:
+            logger.warning(f"[STT] Error during model cache cleanup: {e}")
+    else:
+        logger.info("[STT] No cached model to clear")
+
 
 class LocalWhisperSTT:
     """
@@ -119,14 +150,24 @@ class LocalWhisperSTT:
         self.vad_parameters = vad_parameters
         
 
-        # Load Whisper model
-        logger.info(f"Loading Whisper model '{model_size}' on {self.device}...")
-        self._model = WhisperModel(
-            model_size,
-            device=self.device,
-            compute_type=self.compute_type,
-        )
-        logger.info("Whisper model loaded.")
+        # Load Whisper model (global singleton - reused across sessions)
+        global _GLOBAL_WHISPER_MODEL, _GLOBAL_WHISPER_CONFIG
+        
+        current_config = (model_size, self.device, self.compute_type)
+        
+        if _GLOBAL_WHISPER_MODEL is None or _GLOBAL_WHISPER_CONFIG != current_config:
+            logger.info(f"Loading Whisper model '{model_size}' on {self.device}...")
+            _GLOBAL_WHISPER_MODEL = WhisperModel(
+                model_size,
+                device=self.device,
+                compute_type=self.compute_type,
+            )
+            _GLOBAL_WHISPER_CONFIG = current_config
+            logger.info("Whisper model loaded.")
+        else:
+            logger.info(f"Reusing cached Whisper model '{model_size}'")
+        
+        self._model = _GLOBAL_WHISPER_MODEL
         
         # Try to import noise reduction library
         if self.use_noise_reduction:
@@ -279,12 +320,34 @@ class LocalWhisperSTT:
 
     async def send_audio(self, audio_chunk: bytes) -> None:
         """Queue audio for processing"""
-        await self._audio_queue.put(audio_chunk)
+        if not self._close_signal.is_set():
+            await self._audio_queue.put(audio_chunk)
 
     async def close(self) -> None:
-        """Stop processing"""
+        """Stop processing and cleanup"""
+        if self._close_signal.is_set():
+            return  # Already closed
         self._close_signal.set()
+        
+        # Drain the queue first to prevent blocking
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        
+        # Send sentinel
         await self._audio_queue.put(None)
+        
+        # Clear CUDA cache to free memory
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                logger.info("[STT] CUDA cache cleared")
+        except Exception as e:
+            logger.warning(f"[STT] CUDA cleanup error: {e}")
 
     # =========================================================================
     # NOISE DETECTION & CALIBRATION
@@ -306,11 +369,24 @@ class LocalWhisperSTT:
                 rms_values.append(rms * 32768)  # Convert back to int16 scale
         
         if rms_values:
-            # Use 90th percentile to avoid outliers
-            noise_level = np.percentile(rms_values, 90)
-            # Set threshold at 2.5x the noise floor
-            self.adaptive_threshold = max(noise_level * 2.5, self.base_silence_threshold)
+            # Filter out zero values (no audio)
+            non_zero_values = [v for v in rms_values if v > 10]
+            
+            if non_zero_values:
+                # Use 90th percentile to avoid outliers
+                noise_level = np.percentile(non_zero_values, 90)
+                # Set threshold at 2.5x the noise floor, with minimum
+                self.adaptive_threshold = max(noise_level * 2.5, self.base_silence_threshold)
+            else:
+                # No valid audio during calibration - use conservative default
+                noise_level = 0.0
+                self.adaptive_threshold = self.base_silence_threshold
+                
             logger.info(f"Noise floor: {noise_level:.1f}, Threshold: {self.adaptive_threshold:.1f}")
+        else:
+            # Fallback to base threshold
+            self.adaptive_threshold = self.base_silence_threshold
+            logger.info(f"No calibration data, using base threshold: {self.adaptive_threshold:.1f}")
         
         # Store noise profile for spectral reduction if enabled
         if self.use_noise_reduction:
@@ -380,7 +456,8 @@ class LocalWhisperSTT:
                 log_progress = self.log_progress,
                 vad_filter=self.vad_filter,
                 vad_parameters=self.vad_parameters,
-
+                no_speech_threshold=0.6,  # Higher = more aggressive filtering of non-speech
+                condition_on_previous_text=False,  # Prevent hallucination loops
             )
             
             # Simple simulation of partial Transcription if needed, 
@@ -391,8 +468,50 @@ class LocalWhisperSTT:
             text = " ".join([segment.text for segment in segments])
             text = self._filter_hallucinations(text)
             
-            # Return the configured language, not the detected one
-            return text, self.language or info.language
+            # Determine detected language with confidence check
+            detected_lang = info.language
+            detected_prob = info.language_probability
+            
+            # Log detection info for debugging
+            logger.info(f"[Language Detection] Detected: {detected_lang} (confidence: {detected_prob:.2%})")
+            
+            # If auto-detect mode (self.language is None), apply confidence threshold
+            if self.language is None:
+                # Low confidence or commonly confused languages
+                # Malay (ms), Indonesian (id) often confused with English
+                confused_langs = {"ms", "id", "tl", "jw", "su"}  # Malay, Indonesian, Tagalog, Javanese, Sundanese
+                
+                if detected_lang in confused_langs and detected_prob < 0.85:
+                    # If low confidence on a commonly confused language,
+                    # re-transcribe with English to compare
+                    logger.info(f"[Language Detection] Low confidence ({detected_prob:.2%}) on {detected_lang}, trying English...")
+                    
+                    segments_en, info_en = self._model.transcribe(
+                        audio,
+                        beam_size=self.beam_size,
+                        task=self.task,
+                        best_of=2,
+                        language="en",  # Force English
+                        without_timestamps=True,
+                        log_progress=False,  # Don't log twice
+                        vad_filter=self.vad_filter,
+                        vad_parameters=self.vad_parameters,
+                        no_speech_threshold=0.6,
+                        condition_on_previous_text=False,
+                    )
+                    
+                    text_en = " ".join([segment.text for segment in segments_en])
+                    text_en = self._filter_hallucinations(text_en)
+                    
+                    # Use English result if it produced meaningful output
+                    if text_en and len(text_en) >= len(text) * 0.7:
+                        logger.info(f"[Language Detection] Using English transcription instead")
+                        return text_en, "en"
+                
+                return text, detected_lang
+            else:
+                # Using explicitly set language
+                return text, self.language
             
         except Exception as e:
             logger.error(f"Transcription error: {e}")
@@ -409,15 +528,28 @@ class LocalWhisperSTT:
         blocklist = {
             "you", "you.", "You", "You.",
             "thank you", "thank you.", "thanks", "thanks.",
-            "bye", "bye.", "goodbye",
+            "Thank you.", "Thank you", "Thanks.", "Thanks",
+            "thank you for watching", "thanks for watching",
+            "bye", "bye.", "goodbye", "Goodbye", "Goodbye.",
             # Common subtitle artifacts
-            "MBC News", "Amara.org", "Subtitle by",
+            "MBC News", "Amara.org", "Subtitle by", "Subtitles by",
+            "Subscribe", "subscribe", "Like and subscribe",
             # Single letters or numbers
-            "a", "i", "1", "2",
+            "a", "i", "1", "2", "A", "I",
             # Breathing sounds transcribed as words
-            "huh", "uh", "um", "hmm", "mhm",
+            "huh", "uh", "um", "hmm", "mhm", "mm",
+            "Huh", "Uh", "Um", "Hmm", "Mhm", "Mm",
             # Common noise hallucinations
-            "oh", "ah", "eh", "okay", "ok",
+            "oh", "ah", "eh", "okay", "ok", "OK",
+            "Oh", "Ah", "Eh", "Okay", "Ok",
+            # Music/sound descriptions
+            "[Music]", "[Applause]", "[Laughter]", 
+            "(Music)", "(Applause)", "(Laughter)",
+            "♪", "♫",
+            # Common Whisper hallucinations
+            "...", "…", "----", "____",
+            "The end.", "The End.", "THE END",
+            "Please subscribe.", "Don't forget to subscribe.",
         }
         
         if clean.lower() in blocklist:

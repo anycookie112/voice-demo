@@ -7,6 +7,7 @@ import {
   activities,
   logs,
 } from "./stores";
+import { language } from "./stores/language";
 import { createAudioCapture, createAudioPlayback } from "./audio";
 import { get } from "svelte/store";
 
@@ -198,10 +199,13 @@ export function createVoiceSession(): VoiceSession {
 
     // Connect WebSocket
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    let wsUrl = `${protocol}//${window.location.host}/ws`;
+    const currentLanguage = get(language);
+    const params = new URLSearchParams();
     if (customPrompt) {
-      wsUrl += `?custom_prompt=${encodeURIComponent(customPrompt)}`;
+      params.set("custom_prompt", customPrompt);
     }
+    params.set("language", currentLanguage);
+    const wsUrl = `${protocol}//${window.location.host}/ws?${params.toString()}`;
     ws = new WebSocket(wsUrl);
     ws.binaryType = "arraybuffer";
 

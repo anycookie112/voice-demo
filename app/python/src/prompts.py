@@ -310,3 +310,23 @@ Spoken content here
 
 ↑ This is WRONG - missing </TTS> tag!
 """
+
+def get_language_instruction(language: str) -> str:
+    """Return the language instruction based on the selected language."""
+    if language == "en":
+        return "\n\nIMPORTANT: You MUST respond in English only.\n\n"
+    elif language == "zh":
+        return "\n\nIMPORTANT: You MUST respond in Chinese (Mandarin) only.\n\n"
+    elif language == "ms":
+        return "\n\nIMPORTANT: You MUST respond in Malay (Bahasa Melayu) only.\n\n"
+    else:
+        # Default 'auto' behavior - no extra instruction, use original prompt as-is
+        return ""
+
+
+def get_prompt(language: str = "auto") -> str:
+    lang_instruction = get_language_instruction(language)
+    
+    return f"""{lang_instruction}{FORMAT_PROMPT}
+        {SHOP_PROMPT}
+        """

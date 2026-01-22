@@ -5,7 +5,7 @@ from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 from dotenv import load_dotenv
 
-from prompts import FORMAT_PROMPT
+from prompts import get_prompt
 from models import get_ollama_model, get_groq_model
 from cartesia_prompts import CARTESIA_TTS_SYSTEM_PROMPT
 
@@ -72,7 +72,7 @@ def initialize_llm():
 llm = initialize_llm()
 
 
-def get_agent(system_prompt_override=None):
+def get_agent(system_prompt_override=None, language: str = "auto"):
     """Create and return an agent with the specified system prompt."""
     if system_prompt_override:
         # Append TTS-specific instructions to custom prompts
@@ -125,13 +125,13 @@ def get_agent(system_prompt_override=None):
         """
         tools = []
     else:
-        prompt = FORMAT_PROMPT 
+        prompt = get_prompt(language)
         tools = [add_to_order, confirm_order]
     
     return create_agent(
         model=llm,
         tools=tools,
-        system_prompt=FORMAT_PROMPT ,
+        system_prompt=prompt,
         # checkpointer=InMemorySaver(),
     )
 

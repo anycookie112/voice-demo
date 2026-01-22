@@ -1,5 +1,6 @@
 <script lang="ts">
   import { session } from '../stores';
+  import { language, languageLabels, type LanguageOption } from '../stores/language';
 
   interface Props {
     onStart: () => void;
@@ -7,6 +8,8 @@
   }
 
   let { onStart, onStop }: Props = $props();
+
+  const languageOptions: LanguageOption[] = ["auto", "en", "zh", "ms"];
 
   const statusConfig = {
     ready: { dot: 'bg-cyan-400 shadow-[0_0_8px_theme(colors.cyan.400)]', text: 'Ready' },
@@ -20,6 +23,26 @@
 </script>
 
 <div class="bg-white rounded-2xl p-6 mb-5 border border-gray-200">
+  <!-- Language Selector -->
+  <div class="flex items-center gap-2 mb-4">
+    <span class="text-sm font-medium text-gray-600">Language:</span>
+    <div class="flex gap-1">
+      {#each languageOptions as lang}
+        <button
+          onclick={() => language.setLanguage(lang)}
+          disabled={$session.connected}
+          class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200
+                 {$language === lang 
+                   ? 'bg-gray-900 text-white' 
+                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}
+                 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {languageLabels[lang]}
+        </button>
+      {/each}
+    </div>
+  </div>
+
   <div class="flex gap-3 mb-4">
     <button
       onclick={onStart}

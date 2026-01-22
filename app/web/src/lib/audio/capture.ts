@@ -70,16 +70,25 @@ export function createAudioCapture(): AudioCapture {
   let audioContext: AudioContext | null = null;
   let workletNode: AudioWorkletNode | null = null;
   let mediaStream: MediaStream | null = null;
+  let sourceNode: MediaStreamAudioSourceNode | null = null;
 
   async function start(onChunk: (chunk: ArrayBuffer) => void): Promise<void> {
-    // Create AudioContext if needed
-    if (!audioContext) {
-      audioContext = new AudioContext();
-      const blob = new Blob([workletCode], { type: "application/javascript" });
-      const workletUrl = URL.createObjectURL(blob);
-      await audioContext.audioWorklet.addModule(workletUrl);
-      URL.revokeObjectURL(workletUrl);
+    // Always create a fresh AudioContext to ensure clean state
+    // Close previous one if it exists
+    if (audioContext) {
+      try {
+        await audioContext.close();
+      } catch (e) {
+        console.warn("Error closing previous AudioContext:", e);
+      }
+      audioContext = null;
     }
+
+    audioContext = new AudioContext();
+    const blob = new Blob([workletCode], { type: "application/javascript" });
+    const workletUrl = URL.createObjectURL(blob);
+    await audioContext.audioWorklet.addModule(workletUrl);
+    URL.revokeObjectURL(workletUrl);
 
     // Resume if suspended
     if (audioContext.state === "suspended") {
@@ -96,7 +105,7 @@ export function createAudioCapture(): AudioCapture {
     });
 
     // Create worklet node and connect
-    const source = audioContext.createMediaStreamSource(mediaStream);
+    sourceNode = audioContext.createMediaStreamSource(mediaStream);
     workletNode = new AudioWorkletNode(audioContext, "pcm-processor");
 
 
@@ -110,13 +119,22 @@ export function createAudioCapture(): AudioCapture {
       }
     };
 
-    source.connect(workletNode);
+    sourceNode.connect(workletNode);
   }
 
   function stop(): void {
+    // Reset audio level to zero immediately
+    audioLevel.set(0);
+
     if (workletNode) {
       workletNode.disconnect();
+      workletNode.port.onmessage = null;
       workletNode = null;
+    }
+
+    if (sourceNode) {
+      sourceNode.disconnect();
+      sourceNode = null;
     }
 
     if (mediaStream) {
@@ -124,8 +142,11 @@ export function createAudioCapture(): AudioCapture {
       mediaStream = null;
     }
 
-    // Reset audio level to zero when stopped
-    audioLevel.set(0);
+    // Close the AudioContext to fully reset state
+    if (audioContext) {
+      audioContext.close().catch(console.warn);
+      audioContext = null;
+    }
   }
 
   return { start, stop };

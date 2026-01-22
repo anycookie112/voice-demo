@@ -193,12 +193,32 @@ class KokoroTTS:
 
     async def close(self) -> None:
         """
-        Signal the adapter to stop.
+        Signal the adapter to stop and cleanup.
         """
+        if self._close_signal.is_set():
+            return  # Already closed
         self._close_signal.set()
+        
+        # Clear any pending text in the queue
+        while not self._text_queue.empty():
+            try:
+                self._text_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        
         # Put a sentinel to unblock any pending queue get()
         with contextlib.suppress(asyncio.QueueFull):
             await self._text_queue.put(None)
+        
+        # Clear CUDA cache to free memory
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print("[Kokoro] CUDA cache cleared")
+        except Exception as e:
+            print(f"[Kokoro] CUDA cleanup error: {e}")
 
     def interrupt(self) -> None:
         """

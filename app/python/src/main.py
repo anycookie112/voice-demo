@@ -42,7 +42,7 @@ from events import (
     event_to_dict,
 )
 from utils import merge_async_iters
-from fasterwhisper_stt import LocalWhisperSTT 
+from fasterwhisper_stt import LocalWhisperSTT, clear_whisper_model_cache 
 from kokoro_tts import KokoroTTS
 from agents import get_agent
 from response_parser import parse_agent_response
@@ -71,74 +71,6 @@ app.add_middleware(
 )
 
 
-async def _stt_stream(
-    audio_stream: AsyncIterator[bytes],
-) -> AsyncIterator[VoiceAgentEvent]:
-    """
-    Transform stream: Audio (Bytes) → Voice Events (VoiceAgentEvent)
-    """
-    logger.info("[System] Initializing STT Model (Whisper)...")
-    # stt = WhisperPytorchSTT(
-    #         model_size="large-v3-turbo",
-    #         sample_rate=16000,          # <= IMPORTANT: use the WAV's SR (likely 24000)
-    #         device="cuda",           # or "cpu" if you want CPU
-    #         compute_type="float16",  # safe
-    #         silence_threshold=50.0,  # make VAD more permissive
-    #         min_silence_chunks=3,    # detect utterance quickly
-    #     )
-    # stt = LocalWhisperSTT(
-    #     model_size="large-v3-turbo", # or "distil-large-v3" for 3x speed
-    #     device="cuda",         # FORCE CUDA
-    #     compute_type="float16" # FORCE FLOAT16
-    # )
-    # NEW IMPROVED WHISPER STT
-    stt = LocalWhisperSTT(
-        base_silence_threshold=200.0,
-        energy_window_size=5,
-        speech_ratio_threshold=0.6,
-        end_of_speech_silence=1.0,
-        end_of_turn_silence=0.5,
-        min_speech_duration=0.8,
-        use_noise_reduction=False,  
-        # device = "cpu",
-        # compute_type = "int8",
-    )
-    logger.info("[System] STT Model Ready.")
-
-    async def send_audio():
-        """
-        Background task that pumps audio chunks to the STT model.
-
-        This runs concurrently with the main coroutine, continuously reading
-        audio chunks from the input stream and forwarding them to the STT.
-        When the input stream ends, it signals completion by closing the
-        WebSocket connection.
-        """
-        try:
-            # Stream each audio chunk to the STT as it arrives
-            async for audio_chunk in audio_stream:
-                await stt.send_audio(audio_chunk)
-        finally:
-            # Signal that audio streaming is complete
-            await stt.close()
-
-    # Launch the audio sending task in the background
-    # This allows us to simultaneously receive transcripts in the main coroutine
-    send_task = asyncio.create_task(send_audio())
-
-    try:
-        # Consumer loop: receive and yield transcription events as they arrive
-        # from the STT model. The receive_events() method yields transcripts
-        # as they become available.
-        async for event in stt.receive_events():
-            yield event
-    finally:
-        # Cleanup: ensure the background task is cancelled and awaited
-        with contextlib.suppress(asyncio.CancelledError):
-            send_task.cancel()
-            await send_task
-        # Ensure the WebSocket connection is closed
-        await stt.close()
 
 
 def make_agent_stream(agent_executor):
@@ -382,11 +314,13 @@ async def _tts_stream(
         async for event in merge_async_iters(process_upstream(), tts.receive_events()):
             yield event
     finally:
+        logger.info("[TTS] Cleaning up TTS stream...")
         await tts.close()
+        logger.info("[TTS] TTS stream cleanup complete")
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
+async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None, language: str = "auto"):
     await websocket.accept()
     
     if custom_prompt:
@@ -395,17 +329,77 @@ async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
         logger.info(f"\n{bar}\n{msg}\n{bar}")
         await websocket.send_json(event_to_dict(LogEvent.create(msg)))
     else:
-        msg = "Using Default System Prompt (with markdown support)."
+        msg = f"Using Default System Prompt (language: {language})."
         logger.info(msg)
         await websocket.send_json(event_to_dict(LogEvent.create(msg)))
 
     # Only pass custom_prompt if it's actually provided
     # None means use default system_prompt with markdown formatting
-    current_agent = get_agent(system_prompt_override=custom_prompt if custom_prompt else None)
+    current_agent = get_agent(system_prompt_override=custom_prompt if custom_prompt else None, language=language)
     _agent_stream = make_agent_stream(current_agent)
 
+    async def _stt_stream_local(
+        audio_stream: AsyncIterator[bytes],
+    ) -> AsyncIterator[VoiceAgentEvent]:
+        """
+        Transform stream: Audio (Bytes) → Voice Events (VoiceAgentEvent)
+        """
+        # Determine language for Whisper
+        # "auto" -> None ( Whisper detects )
+        # "en", "zh", etc. -> passed directly
+        whisper_lang = None if language == "auto" else language
+        
+        logger.info(f"[System] Initializing STT Model (Whisper) with language={whisper_lang}...")
+
+        stt = LocalWhisperSTT(
+            base_silence_threshold=300.0,  # Higher base threshold
+            energy_window_size=5,
+            speech_ratio_threshold=0.6,
+            end_of_speech_silence=1.5,     # Wait 1.5s of silence before transcribing
+            end_of_turn_silence=0.8,       # Extra 0.8s to confirm turn is over
+            min_speech_duration=0.5,       # Lower min speech to catch short phrases
+            max_buffer_duration=30.0,      # Allow up to 30s of speech
+            use_noise_reduction=False,
+            language=whisper_lang  
+        )
+        logger.info("[System] STT Model Ready.")
+
+        async def send_audio():
+            """
+            Background task that pumps audio chunks to the STT model.
+            """
+            try:
+                # Stream each audio chunk to the STT as it arrives
+                async for audio_chunk in audio_stream:
+                    await stt.send_audio(audio_chunk)
+            finally:
+                # Signal that audio streaming is complete
+                await stt.close()
+
+        # Launch the audio sending task in the background
+        send_task = asyncio.create_task(send_audio())
+
+        try:
+            # Consumer loop: receive and yield transcription events as they arrive
+            async for event in stt.receive_events():
+                yield event
+        finally:
+            # Cleanup: ensure proper shutdown
+            logger.info("[STT] Cleaning up STT stream...")
+            
+            # First, close the STT to signal shutdown
+            await stt.close()
+            
+            # Then cancel the send task if still running
+            if not send_task.done():
+                send_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await send_task
+            
+            logger.info("[STT] STT stream cleanup complete")
+
     pipeline = (
-        RunnableGenerator(_stt_stream)  # Audio -> STT events
+        RunnableGenerator(_stt_stream_local)  # Audio -> STT events
         | RunnableGenerator(_agent_stream)  # STT events -> STT + Agent events
         | RunnableGenerator(_tts_stream)  # STT + Agent events -> All events
     )
@@ -441,6 +435,8 @@ async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None):
     except Exception as e:
         logger.error(f"Session error: {e}")
     finally:
+        # Clear Whisper model cache to reinitialize on next session
+        clear_whisper_model_cache()
         logger.info("Session cleanup complete")
 
 
