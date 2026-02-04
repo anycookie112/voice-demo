@@ -33,7 +33,7 @@ class Qwen3TTS:
         device: str = "cuda:0",
         dtype=torch.bfloat16,
         attn_implementation: str = "flash_attention_2",
-        language: str = "Auto",
+        language: str = "auto",  # Supported: auto, chinese, english, french, german, italian, japanese, korean, portuguese, russian, spanish
         speaker: str = "Vivian",
         instruct: Optional[str] = None,
         sample_rate: int = 24000,
@@ -96,12 +96,21 @@ class Qwen3TTS:
             trust_remote_code=True,
         )
         print(f"[Qwen3TTS] Model loaded successfully!")
-        
-        print(f"[Qwen3TTS] Model loaded successfully!")
 
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
+
+    def set_instruct(self, instruct: str) -> None:
+        """
+        Set the voice instruction/tone for TTS synthesis.
+        
+        Args:
+            instruct: Instruction string describing how to speak (e.g., "Speak warmly and friendly")
+        """
+        if instruct and instruct.strip():
+            self.instruct = instruct.strip()
+            print(f"[Qwen3TTS] Voice instruction set: {self.instruct[:50]}...")
 
     async def send_text(self, text: Optional[str]) -> None:
         """

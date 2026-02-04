@@ -325,6 +325,21 @@ class TTSTextEvent:
 
 
 @dataclass
+class TTSInstructEvent:
+    """
+    Event emitted to set TTS voice instruction/tone.
+    Used with Qwen3-TTS to dynamically control how text is spoken.
+    """
+    type: Literal["tts_instruct"]
+    instruct: str
+    ts: int
+
+    @classmethod
+    def create(cls, instruct: str) -> "TTSInstructEvent":
+        return cls(type="tts_instruct", instruct=instruct, ts=_now_ms())
+
+
+@dataclass
 class LogEvent:
     """Event for backend-to-frontend logging."""
     type: Literal["log"]
@@ -336,7 +351,7 @@ class LogEvent:
         return cls(type="log", message=message, ts=_now_ms())
 
 # Update VoiceAgentEvent union
-VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent, TTSEndEvent, TTSStopEvent, MarkdownChunkEvent, TTSTextEvent, LogEvent]
+VoiceAgentEvent = Union[UserInputEvent, STTEvent, AgentEvent, TTSChunkEvent, TTSEndEvent, TTSStopEvent, MarkdownChunkEvent, TTSTextEvent, TTSInstructEvent, LogEvent]
 
 
 def event_to_dict(event: VoiceAgentEvent) -> dict:
@@ -393,5 +408,7 @@ def event_to_dict(event: VoiceAgentEvent) -> dict:
         return {"type": event.type, "text": event.text, "ts": event.ts}
     elif isinstance(event, TTSTextEvent):
         return {"type": event.type, "text": event.text, "ts": event.ts}
+    elif isinstance(event, TTSInstructEvent):
+        return {"type": event.type, "instruct": event.instruct, "ts": event.ts}
     else:
         raise ValueError(f"Unknown event type: {type(event)}")

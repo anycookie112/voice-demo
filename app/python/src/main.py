@@ -39,6 +39,7 @@ from events import (
     LogEvent,
     MarkdownChunkEvent,
     TTSTextEvent,
+    TTSInstructEvent,
     event_to_dict,
 )
 from utils import merge_async_iters
@@ -80,7 +81,7 @@ def make_agent_stream(agent_executor):
     ) -> AsyncIterator[VoiceAgentEvent]:
         """
         Transform stream: STT events → Agent events
-        Streams <MARKDOWN> and <TTS> content in real-time.
+        Streams <MARKDOWN>, <INSTRUCT>, and <TTS> content in real-time.
         """
         thread_id = str(uuid4())
 
@@ -101,7 +102,7 @@ def make_agent_stream(agent_executor):
                 
                 # Streaming Parser State
                 buffer = ""
-                active_tag: str | None = None  # "MARKDOWN" or "TTS"
+                active_tag: str | None = None  # "MARKDOWN", "INSTRUCT", or "TTS"
 
                 async for message, metadata in stream:
                     # --- PROCESS AI MESSAGES (TEXT) ---
@@ -126,24 +127,27 @@ def make_agent_stream(agent_executor):
                                 if active_tag is None:
                                     # Look for new tags
                                     m_start = buffer.find("<MARKDOWN>")
+                                    i_start = buffer.find("<INSTRUCT>")
                                     t_start = buffer.find("<TTS>")
                                     
-                                    # Determine first tag
-                                    if m_start != -1 and (t_start == -1 or m_start < t_start):
-                                        # Switch to MARKDOWN
-                                        buffer = buffer[m_start + 10:] # len("<MARKDOWN>") == 10
-                                        active_tag = "MARKDOWN"
-                                        continue # Re-evaluate buffer in new state
-                                    elif t_start != -1:
-                                        # Switch to TTS
-                                        buffer = buffer[t_start + 5:] # len("<TTS>") == 5
-                                        active_tag = "TTS"
+                                    # Find the earliest tag
+                                    starts = []
+                                    if m_start != -1:
+                                        starts.append((m_start, "MARKDOWN", 10))
+                                    if i_start != -1:
+                                        starts.append((i_start, "INSTRUCT", 10))
+                                    if t_start != -1:
+                                        starts.append((t_start, "TTS", 5))
+                                    
+                                    if starts:
+                                        # Sort by position to find earliest
+                                        starts.sort(key=lambda x: x[0])
+                                        pos, tag_name, tag_len = starts[0]
+                                        buffer = buffer[pos + tag_len:]
+                                        active_tag = tag_name
                                         continue
                                     else:
                                         # No start tag found. Keep buffer for next chunk.
-                                        # Only keep tail to avoid unlimited growth if Agent outputs garbage?
-                                        # For now, trust the agent obeys prompt. 
-                                        # Optimization: If buffer is huge and no tag, maybe flush/log?
                                         break
                                 
                                 else:
@@ -159,7 +163,10 @@ def make_agent_stream(agent_executor):
                                         if chunk:
                                             if active_tag == "MARKDOWN":
                                                 yield MarkdownChunkEvent.create(chunk)
-                                            else:
+                                            elif active_tag == "INSTRUCT":
+                                                # INSTRUCT is emitted as a single event (not streamed)
+                                                yield TTSInstructEvent.create(chunk.strip())
+                                            else:  # TTS
                                                 yield TTSTextEvent.create(chunk)
                                         
                                         active_tag = None
@@ -167,6 +174,10 @@ def make_agent_stream(agent_executor):
                                     
                                     else:
                                         # No closing tag yet. Yield partial content safely.
+                                        # For INSTRUCT, we wait for the full content (don't stream)
+                                        if active_tag == "INSTRUCT":
+                                            break  # Wait for closing tag
+                                        
                                         # We must NOT yield partial tags (e.g. "</MARK")
                                         # Look for the start of a potential closing tag ("<")
                                         last_open = buffer.rfind("<")
@@ -183,7 +194,7 @@ def make_agent_stream(agent_executor):
                                         if to_yield:
                                             if active_tag == "MARKDOWN":
                                                 yield MarkdownChunkEvent.create(to_yield)
-                                            else:
+                                            else:  # TTS
                                                 yield TTSTextEvent.create(to_yield)
                                         break # Need more data
 
@@ -244,7 +255,7 @@ async def _tts_stream(
         model_path="/home/robust/models/Qwen3-TTS-12Hz-1.7B-CustomVoice",
         device="cuda:0" if torch.cuda.is_available() else "cpu",
         dtype=torch.bfloat16,
-        language="Auto",
+        language="auto",  # lowercase required: auto, chinese, english, etc.
         speaker="Vivian",
         instruct="Use a professional tone"
     )
@@ -291,6 +302,12 @@ async def _tts_stream(
                 target_lang = lang_map.get(event.language, 'a') # Default to English
                 if hasattr(tts, 'set_language'):
                     tts.set_language(target_lang)
+
+            # Handle TTS Instruct event (dynamic voice tone control for Qwen3TTS)
+            if event.type == "tts_instruct":
+                logger.info(f"[TTS] Voice instruct received: {event.instruct[:50]}...")
+                if hasattr(tts, 'set_instruct'):
+                    tts.set_instruct(event.instruct)
 
             # NEW: Process TTSTextEvent (parsed TTS content from <TTS> tags)
             if event.type == "tts_text":
