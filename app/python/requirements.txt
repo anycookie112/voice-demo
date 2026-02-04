@@ -40,8 +40,10 @@ langchain_ollama
 langchain_groq
 diffusers
 accelerate
-transformers==4.51.3
+transformers==4.57.3
 torchaudio
+qwen_tts
+flash-attn
 
 # EXPLICITLY REMOVED: ctranslate2 
 # (Reason: We built it manually in the Dockerfile for GB10 support)

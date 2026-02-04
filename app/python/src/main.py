@@ -46,6 +46,7 @@ from fasterwhisper_stt import LocalWhisperSTT, clear_whisper_model_cache
 from kokoro_tts import KokoroTTS
 from agents import get_agent
 from response_parser import parse_agent_response
+from qwen3_tts import Qwen3TTS
 # from vibevoice_tts import VibeVoiceAsyncTTS
 # from vibevoice_new import VibeVoiceTTS
 
@@ -238,7 +239,16 @@ async def _tts_stream(
     # )
 
     # kokoro tts
-    tts = KokoroTTS() 
+    # tts = KokoroTTS() 
+    tts = Qwen3TTS(
+        model_path="/home/robust/models/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+        device="cuda:0" if torch.cuda.is_available() else "cpu",
+        dtype=torch.bfloat16,
+        language="Auto",
+        speaker="Vivian",
+        instruct="Use a professional tone"
+    )
+
     logger.info("[System] TTS Model Ready.")
     
     # # vibe 1.5b

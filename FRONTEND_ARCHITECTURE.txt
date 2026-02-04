@@ -1,0 +1,95 @@
+# Frontend Architecture & Data Flow Guide
+
+This document explains how the Voice Demo application handles real-time data streaming from the backend agent to the frontend UI, specifically focusing on the Activity Feed and Markdown rendering.
+
+## 1. Activity Feed Data Flow
+
+The data flow works like a pipeline, moving from the LLM on the server to the user's screen in real-time.
+
+### Step 1: Backend Generation (Python)
+- **Source**: `app/python/src/main.py` -> `make_agent_stream()`
+- **Process**: 
+  1. The LLM generates text tokens.
+  2. A streaming parser watches for `<MARKDOWN>` tags in the text.
+  3. When content inside these tags is detected, it is wrapped in a `MarkdownChunkEvent`.
+  4. This event is serialized to JSON: `{"type": "markdown_chunk", "text": "...", "ts": 123456}`.
+
+### Step 2: WebSocket Transmission
+- **Protocol**: The JSON event is sent over the WebSocket connection (`/ws`).
+- **Types**: In `app/web/src/lib/types.ts`, the frontend defines the expected shape:
+  ```typescript
+  type ServerEvent = | { type: "markdown_chunk"; ts: number; text: string } ...
+  ```
+
+### Step 3: Frontend Handling (Svelte)
+- **Controller**: `app/web/src/lib/websocket.ts` -> `handleEvent()`
+- **Logic**:
+  1. When a `markdown_chunk` arrives:
+     - It checks if we are already streaming a response (`activeMarkdownActivityId`).
+     - **First Chunk**: Calls `activities.add("markdown", ...)` to create a new card in the feed.
+     - **Subsequent Chunks**: Calls `activities.appendToId(...)` to append text to the *existing* card.
+     - This prevents creating hundreds of tiny cards for one sentence.
+  2. When `agent_end` arrives:
+     - It resets `activeMarkdownActivityId = null` so the next response starts a new card.
+
+### Step 4: State Management (Store)
+- **Store**: `app/web/src/lib/stores/activity.ts`
+- **Mechanism**: A Svelte Writeable Store (`writable([])`).
+- **Action**: `update()` modifies the array of items. Svelte automatically detects this change and triggers a re-render of any component subscribing to `$activities`.
+
+### Step 5: Rendering
+- **Component**: `app/web/src/lib/components/ActivityFeed.svelte`
+- **View**: It loops through the items in the store using `{#each $activities as item}`.
+- **Delegation**: For items of type `markdown`, it passes the text content to the `<Markdown />` component.
+
+---
+
+## 2. Markdown Renderer Architecture
+
+The markdown renderer converts raw text (which might be messy or malformed by the LLM) into beautiful HTML.
+
+### Core Component: `Markdown.svelte`
+Located in `app/web/src/lib/components/`.
+
+### Library
+- **Tool**: `markdown-it` (replaced `marked` for better table stability).
+- **Configuration**:
+  ```typescript
+  const md = new MarkdownIt({
+    html: false,   // Security: Disable raw HTML to prevent XSS
+    breaks: false, // Standard markdown line behavior
+    linkify: true  // Auto-link URLs
+  }).enable('table'); // CRITICAL: Explicitly enable GFM tables
+  ```
+
+### The Rendering Pipeline
+
+1. **Input**: Raw string from the Activity Feed.
+
+2. **Preprocessing (The Cleaning Phase)**:
+   Before the library sees the markdown, we run custom regex functions to fix common LLM mistakes:
+   - `stripCitations()`: Removes artifacts like `【4:0†source】`.
+   - `fixMalformedTables()`:
+     - Detects tables with missing separator rows.
+     - Detects "merged" headers (e.g., `Header|Col1` on one line).
+     - **Crucially**: It repairs the text structure so the parser can understand it.
+   - `normalizeMathDelimiters()`: Fixes LaTeX math formatting (converting `\[` to `$$`).
+
+3. **Parsing & Rendering**:
+   - `md.render(processedText)` converts the cleaned markdown into an HTML string.
+
+4. **Styling (CSS)**:
+   - The HTML returned by `markdown-it` is plain (e.g., `<table>`, `<h1>`).
+   - We use Svelte's global CSS scope to style these elements specifically within the `.markdown-content` div.
+   - Example:
+     ```css
+     .markdown-content :global(table) {
+       width: 100%;
+       border-collapse: collapse;
+       /* ...Tailwind-like styles... */
+     }
+     ```
+   - This ensures the tables look professional (borders, padding, zebra-striping) without needing inline styles in the HTML.
+
+### Summary
+The system is designed to be **robust**. It assumes the LLM will output "imperfect" markdown and proactively cleans it before rendering, while using a streaming architecture to ensure the user sees the content appearing in real-time.

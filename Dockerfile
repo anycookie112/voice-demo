@@ -41,7 +41,7 @@ WORKDIR /tmp/CTranslate2/python
 RUN pip3 install --break-system-packages -r install_requirements.txt
 RUN python3 setup.py bdist_wheel
 RUN pip3 install --break-system-packages dist/*.whl
-RUN pip3 install --break-system-packages torch torchvision --index-url https://download.pytorch.org/whl/cu130
+RUN pip3 install --break-system-packages torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
 # 6. Install Dependencies (Faster Whisper, etc.)
 WORKDIR /workspace
 RUN pip3 install --break-system-packages faster-whisper
@@ -73,7 +73,7 @@ WORKDIR /app
 #    A. Copy Requirements and install (Filtering out ctranslate2)
 COPY app/python/requirements.txt .
 RUN grep -v "ctranslate2" requirements.txt > req_safe.txt && \
-    pip3 install --break-system-packages -r req_safe.txt
+    pip3 install --default-timeout=300 --break-system-packages -r req_safe.txt
 
 # 1. Copy everything (creates /app/voice-sandwich-demo, /app/VibeVoice, etc.)
 COPY . .

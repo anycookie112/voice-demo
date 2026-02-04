@@ -1,0 +1,204 @@
+# Voice Demo - Markdown & TTS Tag System Changes
+
+This document summarizes all changes made to implement the dual-output system where the LLM outputs separate content for visual display (markdown) and audio (TTS).
+
+---
+
+## 1. BACKEND CHANGES (Python)
+
+### 1.1 agents.py - LLM Prompt Changes
+**Purpose:** Instruct the LLM to output content in two separate tagged sections.
+
+**Change:** Added `format_prompt` that tells the LLM to wrap responses in:
+- `<MARKDOWN>...</MARKDOWN>` - Rich formatted content with tables, lists, emojis
+- `<TTS>...</TTS>` - Plain spoken text with numbers written out (e.g., "six ninety" instead of "$6.90")
+
+---
+
+### 1.2 events.py - New Event Types
+**Purpose:** Define typed events for the streaming pipeline.
+
+**Added:**
+```python
+@dataclass
+class MarkdownChunkEvent:
+    type: Literal["markdown_chunk"]
+    text: str
+    ts: int
+
+@dataclass  
+class TTSTextEvent:
+    type: Literal["tts_text"]
+    text: str
+    ts: int
+```
+
+**Updated:**
+- `VoiceAgentEvent` union to include new types
+- `event_to_dict()` to serialize new events to JSON
+
+---
+
+### 1.3 response_parser.py - NEW FILE
+**Purpose:** Extract content from `<MARKDOWN>` and `<TTS>` tags.
+
+**Function:**
+```python
+def parse_agent_response(response_text: str) -> dict:
+    # Returns {"markdown": "...", "tts": "..."}
+```
+
+**Fallback:** If no tags found, returns the raw text for both fields.
+
+---
+
+### 1.4 main.py - Streaming Parser
+**Purpose:** Parse LLM output in real-time and route to correct streams.
+
+**Key Changes to `make_agent_stream()`:**
+- Implements a **state machine** to detect tags as they stream in
+- States: `None` (outside tags), `"MARKDOWN"`, `"TTS"`
+- When inside `<MARKDOWN>`: yields `MarkdownChunkEvent`
+- When inside `<TTS>`: yields `TTSTextEvent`
+- Handles partial chunks safely (doesn't yield incomplete closing tags)
+
+**Key Changes to `_tts_stream()`:**
+- Now listens for `event.type == "tts_text"` instead of `"agent_chunk"`
+- Buffers text and sends complete sentences to TTS engine
+
+---
+
+## 2. FRONTEND CHANGES (TypeScript/Svelte)
+
+### 2.1 types.ts - Event Type Definitions
+**Added to ServerEvent union:**
+```typescript
+| { type: "markdown_chunk"; ts: number; text: string }
+| { type: "tts_text"; ts: number; text: string }
+```
+
+**Updated ActivityItem type:**
+```typescript
+type: "stt" | "agent" | "tts" | "tool" | "markdown"
+```
+
+---
+
+### 2.2 stores/activity.ts - Store Methods
+**Added methods:**
+```typescript
+// Returns the ID of the newly added item
+add(...) → string
+
+// Append text to an existing activity by ID (for streaming)
+appendToId(id: string, text: string)
+```
+
+---
+
+### 2.3 websocket.ts - Event Handlers
+**Added tracking variables:**
+```typescript
+let activeMarkdownActivityId: string | null = null;
+let activeTtsActivityId: string | null = null;
+```
+
+**Added handlers:**
+```typescript
+case "markdown_chunk": {
+  // First chunk: create new activity card
+  // Subsequent chunks: append to existing card
+}
+
+case "tts_text": {
+  // Same streaming logic for TTS transcript
+}
+```
+
+**Reset on new turn:** Both IDs reset to `null` on `stt_chunk` and `agent_end`.
+
+---
+
+### 2.4 ActivityFeed.svelte - UI Changes
+**Added toggle state:**
+```typescript
+let showTts = $state(false);
+```
+
+**Added filter:**
+```typescript
+const filteredActivities = $derived(
+  $activities.filter(item => showTts || item.type !== 'tts')
+);
+```
+
+**Added toggle button:**
+- Location: Header row, between "Activity" label and "Clear" button
+- Default: "Show Audio Transcript" (gray)
+- Active: "Hide Audio Transcript" (orange)
+
+**Conditional rendering:**
+- `markdown` type items → rendered with `<Markdown />` component
+- Other types → rendered as plain text
+
+**Added styling for new types:**
+- `markdown`: 📝 icon, green color
+- `tts`: 🔊 icon, orange color
+
+---
+
+### 2.5 Markdown.svelte - Renderer
+**Switched library:** `marked` → `markdown-it`
+
+**Reason:** `marked` v17 had breaking API changes for custom renderers that caused `[object Object]` output for tables.
+
+**Configuration:**
+```typescript
+const md = new MarkdownIt({...}).enable('table');
+```
+
+**Preprocessing functions:**
+- `fixMalformedTables()` - Removes duplicate separator rows, fixes merged headers
+- `stripCitations()` - Removes citation artifacts
+- `normalizeMathDelimiters()` - Fixes LaTeX formatting
+
+**Styling:** CSS with `:global()` selectors for tables, headings, lists, code blocks.
+
+---
+
+## 3. DATA FLOW SUMMARY
+
+```
+User speaks → STT → Transcript
+
+Transcript → LLM Agent → Response with <MARKDOWN> and <TTS> tags
+
+Streaming Parser (main.py):
+  ├── Inside <MARKDOWN> → MarkdownChunkEvent → WebSocket
+  └── Inside <TTS> → TTSTextEvent → WebSocket + TTS Engine
+
+Frontend (websocket.ts):
+  ├── markdown_chunk → Activity Store (visual card)
+  └── tts_text → Activity Store (hidden by default) + Audio plays
+
+User sees: Markdown card with tables/formatting
+User hears: Natural spoken text
+User can toggle: "Show Audio Transcript" to see what was spoken
+```
+
+---
+
+## 4. FILES MODIFIED
+
+| File | Type | Summary |
+|------|------|---------|
+| `app/python/src/agents.py` | Modified | Added format_prompt with tag instructions |
+| `app/python/src/events.py` | Modified | Added MarkdownChunkEvent, TTSTextEvent |
+| `app/python/src/response_parser.py` | **NEW** | Tag extraction function |
+| `app/python/src/main.py` | Modified | Streaming tag parser, TTS event handling |
+| `app/web/src/lib/types.ts` | Modified | Added new event types |
+| `app/web/src/lib/stores/activity.ts` | Modified | Added appendToId method |
+| `app/web/src/lib/websocket.ts` | Modified | Handle markdown_chunk, tts_text events |
+| `app/web/src/lib/components/ActivityFeed.svelte` | Modified | Toggle button, filtering |
+| `app/web/src/lib/components/Markdown.svelte` | Rewritten | Switched to markdown-it |
+| `app/web/package.json` | Modified | Replaced marked with markdown-it |
