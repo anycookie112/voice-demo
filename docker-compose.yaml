@@ -22,4 +22,5 @@ services:
       - ./key.pem:/app/key.pem
       - ./app/python:/app/app/python
       - /home/robust/models:/home/robust/models
+      - /home/robust/convert_faster_whisper/models:/home/robust/convert_faster_whisper/models
       - ./VibeVoice/demo/voices:/app/VibeVoice/demo/voices

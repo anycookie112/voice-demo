@@ -47,7 +47,7 @@ class LocalWhisperSTT:
     Enhanced Whisper STT with:
     - Rolling energy window for better noise detection
     - Adaptive silence threshold
-
+    - Custom model path support for specialized models (e.g., Cantonese)
     - Minimum speech duration before transcription
     - Better hallucination filtering
     - End-of-turn detection with confirmation window
@@ -56,6 +56,7 @@ class LocalWhisperSTT:
     def __init__(
         self,
         model_size: str = "large-v3",
+        model_path: str = None,  # Custom model path (overrides model_size if provided)
         sample_rate: int = 16000,
         device: str = "cuda",
         compute_type: str = "float16",
@@ -153,19 +154,24 @@ class LocalWhisperSTT:
         # Load Whisper model (global singleton - reused across sessions)
         global _GLOBAL_WHISPER_MODEL, _GLOBAL_WHISPER_CONFIG
         
-        current_config = (model_size, self.device, self.compute_type)
+        # Use custom model path if provided, otherwise use model_size
+        effective_model = model_path if model_path else model_size
+        current_config = (effective_model, self.device, self.compute_type)
         
         if _GLOBAL_WHISPER_MODEL is None or _GLOBAL_WHISPER_CONFIG != current_config:
-            logger.info(f"Loading Whisper model '{model_size}' on {self.device}...")
+            if model_path:
+                logger.info(f"Loading custom Whisper model from '{model_path}' on {self.device}...")
+            else:
+                logger.info(f"Loading Whisper model '{model_size}' on {self.device}...")
             _GLOBAL_WHISPER_MODEL = WhisperModel(
-                model_size,
+                effective_model,
                 device=self.device,
                 compute_type=self.compute_type,
             )
             _GLOBAL_WHISPER_CONFIG = current_config
             logger.info("Whisper model loaded.")
         else:
-            logger.info(f"Reusing cached Whisper model '{model_size}'")
+            logger.info(f"Reusing cached Whisper model '{effective_model}'")
         
         self._model = _GLOBAL_WHISPER_MODEL
         

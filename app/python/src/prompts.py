@@ -351,11 +351,13 @@ Spoken content here
 def get_language_instruction(language: str) -> str:
     """Return the language instruction based on the selected language."""
     if language == "en":
-        return "\n\nIMPORTANT: You MUST respond in English only.\n\n"
+        return "\n\nCRITICAL LANGUAGE REQUIREMENT: You MUST respond ONLY in English. Do not use any other language.\n\n"
     elif language == "zh":
-        return "\n\nIMPORTANT: You MUST respond in Chinese (Mandarin) only.\n\n"
+        return "\n\nCRITICAL LANGUAGE REQUIREMENT: You MUST respond ONLY in Chinese (Mandarin/中文). Do not use English or any other language. 必须用中文回答。\n\n"
     elif language == "ms":
-        return "\n\nIMPORTANT: You MUST respond in Malay (Bahasa Melayu) only.\n\n"
+        return "\n\nCRITICAL LANGUAGE REQUIREMENT: You MUST respond ONLY in Malay (Bahasa Melayu). Do not use English or any other language. Semua jawapan mesti dalam Bahasa Melayu sahaja.\n\n"
+    elif language == "yue":
+        return "\n\nCRITICAL LANGUAGE REQUIREMENT: You MUST respond ONLY in Chinese (Mandarin/中文). The user speaks Cantonese but reply in Mandarin. 必须用普通话回答。\n\n"
     else:
         # Default 'auto' behavior - no extra instruction, use original prompt as-is
         return ""

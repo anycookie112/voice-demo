@@ -9,7 +9,7 @@
 
   let { onStart, onStop }: Props = $props();
 
-  const languageOptions: LanguageOption[] = ["auto", "en", "zh", "ms"];
+  const languageOptions: LanguageOption[] = ["auto", "en", "zh", "yue", "ms"];
 
   const statusConfig = {
     ready: { dot: 'bg-cyan-400 shadow-[0_0_8px_theme(colors.cyan.400)]', text: 'Ready' },

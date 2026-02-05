@@ -277,30 +277,29 @@ async def _tts_stream(
         async for event in event_stream:
             yield event
 
-            # handle interruption
-            if event.type == "stt_chunk" or event.type == "stt_output":
+            # handle interruption - only on stt_output (final transcription)
+            # stt_chunk is just preview, don't interrupt TTS for that
+            if event.type == "stt_output":
                 if event.transcript.strip():
                      if hasattr(tts, 'interrupt'):
                          tts.interrupt()
                      yield TTSStopEvent.create()
                      text_buffer = "" # clear buffer
 
-            # handle language switching
+            # handle language switching (only for Kokoro TTS, Qwen3TTS uses auto)
             if event.type == "stt_output" and event.language:
                 logger.info(f"[Main] Language detected: {event.language}")
-                # Map Whisper language to Kokoro language
-                # Whisper: 'en', 'zh', 'ms', 'yue', etc.
-                # Kokoro: 'a'/'b' (English), 'z' (Chinese), 'j' (Japanese), etc.
-                
-                lang_map = {
-                    'en': 'a', # Default to American English
-                    'zh': 'z', # Chinese
-                    # 'ms': 'a', # Malay -> English (Fallback/No specific Malay model yet?)
-                    # Add more mappings as Kokoro supports them
-                }
-                
-                target_lang = lang_map.get(event.language, 'a') # Default to English
+                # Qwen3TTS uses language="auto" and handles detection internally
+                # Only apply mapping for Kokoro TTS
                 if hasattr(tts, 'set_language'):
+                    # Kokoro: 'a'/'b' (English), 'z' (Chinese), 'j' (Japanese), etc.
+                    lang_map = {
+                        'en': 'a',
+                        'zh': 'z',
+                        'yue': 'z',
+                        'ms': 'a',
+                    }
+                    target_lang = lang_map.get(event.language, 'a')
                     tts.set_language(target_lang)
 
             # Handle TTS Instruct event (dynamic voice tone control for Qwen3TTS)
@@ -314,9 +313,10 @@ async def _tts_stream(
                 logger.debug(f"[TTS] Received tts_text: {event.text[:50]}...")
                 text_buffer += event.text
                 
-                # Check if we have a full sentence (ends in . ? ! followed by space or newline)
+                # Check if we have a full sentence
+                # Include both English (.?!) and Chinese (。？！) punctuation
                 while True:
-                    match = re.search(r'([.?!]+)(\s+|$)', text_buffer)
+                    match = re.search(r'([.?!。？！]+)(\s*|$)', text_buffer)
                     if match:
                         end_idx = match.end()
                         sentence = text_buffer[:end_idx]
@@ -371,14 +371,24 @@ async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None, la
         """
         Transform stream: Audio (Bytes) → Voice Events (VoiceAgentEvent)
         """
-        # Determine language for Whisper
-        # "auto" -> None ( Whisper detects )
+        # Determine language and model path for Whisper
+        # "auto" -> None (Whisper detects)
+        # "yue" (Cantonese) -> use custom model with auto-detect
         # "en", "zh", etc. -> passed directly
+        
         whisper_lang = None if language == "auto" else language
+        model_path = None 
+        
+        # Use custom Cantonese model if Cantonese is selected
+        if language == "yue":
+            model_path = "/home/robust/convert_faster_whisper/models/large-3-canto"
+            whisper_lang = None  # Let the Cantonese model auto-detect (don't force "yue" code)
+            logger.info(f"[System] Using custom Cantonese STT model: {model_path}")
         
         logger.info(f"[System] Initializing STT Model (Whisper) with language={whisper_lang}...")
 
         stt = LocalWhisperSTT(
+            model_path=model_path,  # Use custom model if provided
             base_silence_threshold=300.0,  # Higher base threshold
             energy_window_size=5,
             speech_ratio_threshold=0.6,
@@ -394,8 +404,8 @@ async def websocket_endpoint(websocket: WebSocket, custom_prompt: str = None, la
         async def send_audio():
             """
             Background task that pumps audio chunks to the STT model.
-            """
-            try:
+            """ 
+            try: 
                 # Stream each audio chunk to the STT as it arrives
                 async for audio_chunk in audio_stream:
                     await stt.send_audio(audio_chunk)
